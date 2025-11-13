@@ -48,20 +48,21 @@ COLOR_BG           = ( 15,  15,  15)
 # Màu chữ HUD / panel
 COLOR_TEXT         = (255, 255, 255)
 
+# Màu chữ cho quân trắng / quân đen (placeholder cho asset sau này)
+COLOR_WHITE_PIECE  = (255, 255, 255)   # trắng tinh
+COLOR_BLACK_PIECE  = ( 25,  25,  25)   # gần đen, vẫn thấy trên ô sáng
 
 # Alias tên “mới” nếu sau này ông muốn dùng cho đẹp, nhưng
 # vẫn trỏ tới mấy màu ở trên để không bị lệch.
-COLOR_LIGHT    = COLOR_LIGHT_SQUARE
-COLOR_DARK     = COLOR_DARK_SQUARE
+COLOR_LIGHT     = COLOR_LIGHT_SQUARE
+COLOR_DARK      = COLOR_DARK_SQUARE
 COLOR_HIGHLIGHT = COLOR_SELECTED
-
 
 # =========================
 #  FONT
 # =========================
 # Tỉ lệ font dựa trên chiều cao 720p
 FONT_SCALE = SCREEN_HEIGHT / 720.0
-
 
 # =========================
 #  ĐỒNG HỒ CỜ VUA
