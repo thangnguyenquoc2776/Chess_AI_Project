@@ -99,11 +99,9 @@ class MainMenuScene(SceneBase):
 
     def _on_simulator(self):
         from .simulator import SimulatorScene
-
-        # Tạm thời chọn agent spec mặc định cho cả 2 bên,
-        # TEAM AI sẽ định nghĩa chi tiết schema agent_spec.
-        white_agent = {"type": "minimax", "level": "easy", "side": "white"}
-        black_agent = {"type": "minimax", "level": "easy", "side": "black"}
+        
+        white_agent = {"type": "minimax", "level": "hard", "side": "white"}
+        black_agent = {"type": "random", "level": "easy", "side": "black"}
 
         self.app.change_scene(
             SimulatorScene,

@@ -1,6 +1,6 @@
 # game/render/piece_renderer.py
 import pygame
-
+from pathlib import Path
 from game.config import (
     BOARD_LEFT,
     BOARD_TOP,
@@ -9,7 +9,7 @@ from game.config import (
     COLOR_WHITE_PIECE,
     COLOR_BLACK_PIECE,
 )
-
+place = './assets/images/pieces/'
 
 def draw_pieces(surface: pygame.Surface, board, font: pygame.font.Font):
     """
@@ -48,9 +48,26 @@ def draw_pieces(surface: pygame.Surface, board, font: pygame.font.Font):
             x = BOARD_LEFT + file * TILE_SIZE
             y = BOARD_TOP + (BOARD_SIZE - 1 - rank) * TILE_SIZE
 
+
+            global place
             cx = x + TILE_SIZE // 2
             cy = y + TILE_SIZE // 2
-
-            text_surf = font.render(char, True, text_color)
-            text_rect = text_surf.get_rect(center=(cx, cy))
-            surface.blit(text_surf, text_rect)
+            image = None
+            if is_white:
+                if char == "P": image = pygame.image.load(place + "w_pawn.png").convert_alpha()
+                if char == "N": image = pygame.image.load(place + "w_knight.png").convert_alpha()
+                if char == "B": image = pygame.image.load(place + "w_bishop.png").convert_alpha()
+                if char == "R": image = pygame.image.load(place + "w_rook.png").convert_alpha()
+                if char == "Q": image = pygame.image.load(place + "w_queen.png").convert_alpha()
+                if char == "K": image = pygame.image.load(place + "w_king.png").convert_alpha()
+            if not is_white:
+                if char == "P": image = pygame.image.load(place + "b_pawn.png").convert_alpha()
+                if char == "N": image = pygame.image.load(place + "b_knight.png").convert_alpha()
+                if char == "B": image = pygame.image.load(place + "b_bishop.png").convert_alpha()
+                if char == "R": image = pygame.image.load(place + "b_rook.png").convert_alpha()
+                if char == "Q": image = pygame.image.load(place + "b_queen.png").convert_alpha()
+                if char == "K": image = pygame.image.load(place + "b_king.png").convert_alpha()
+            if image is None:
+                return
+            text_rect = image.get_rect(center=(cx, cy))
+            surface.blit(image, text_rect)

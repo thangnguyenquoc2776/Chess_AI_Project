@@ -70,3 +70,7 @@ FONT_SCALE = SCREEN_HEIGHT / 720.0
 # Tổng thời gian cho mỗi bên (giây)
 # Ví dụ: 5 phút = 300, 10 phút = 600, 15 phút = 900
 CHESS_TIME_LIMIT_SEC = 300
+
+# Online server config (sửa IP này sang IP / domain server của bạn khi cần)
+ONLINE_SERVER_HOST = "127.0.0.1"
+ONLINE_SERVER_PORT = 5000

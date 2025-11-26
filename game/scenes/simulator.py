@@ -23,11 +23,11 @@ class SimulatorScene(GameLocalScene):
 
         self.white_agent_spec = white_agent_spec or {
             "type": "minimax",
-            "level": "easy",
+            "level": "hard",
             "side": "white",
         }
         self.black_agent_spec = black_agent_spec or {
-            "type": "minimax",
+            "type": "random",
             "level": "easy",
             "side": "black",
         }

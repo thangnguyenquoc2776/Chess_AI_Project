@@ -81,11 +81,8 @@ class PlayMenuScene(SceneBase):
     # ---------- Callbacks ----------
 
     def _on_play_with_ai(self):
-        from .game_vs_ai import GameVsAIScene
-
-        # Mặc định: Người chơi là Trắng, AI Minimax Medium
-        agent_spec = {"type": "minimax", "level": "medium"}
-        self.app.change_scene(GameVsAIScene, human_white=True, agent_spec=agent_spec)
+        from .ai_selection import AISelectionScene
+        self.app.change_scene(AISelectionScene, human_white=True)
 
     def _on_play_online(self):
         from .online_menu import OnlineMenuScene
