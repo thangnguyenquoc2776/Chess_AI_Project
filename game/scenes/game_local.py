@@ -33,52 +33,49 @@ class GameLocalScene(SceneBase):
         super().__init__(app)
         self.mode = mode
 
-        # Trạng thái ván cờ
-        self.board = Board()
-
-        # Font
+        # ----- Core state -----
+        self.board = Board()  # trạng thái ván cờ
         self.font_piece = pygame.font.Font(None, int(40 * FONT_SCALE))
         self.font_hud = pygame.font.Font(None, int(32 * FONT_SCALE))
-        self.font_title_big = pygame.font.Font(None, int(72 * FONT_SCALE))
-        self.font_title_small = pygame.font.Font(None, int(40 * FONT_SCALE))
-        self.font_button = pygame.font.Font(None, int(36 * FONT_SCALE))
 
-        # Lưu ô đang chọn (file, rank) hoặc None
+        # Ô đang chọn + highlight
         self.selected_square: Optional[Tuple[int, int]] = None
-        # Ô đi được (không ăn quân)
-        self.highlight_squares: List[Tuple[int, int]] = []
-        # Ô ăn quân
-        self.capture_squares: List[Tuple[int, int]] = []
-        # 2 ô from/to của nước đi cuối
-        self.last_move_squares: List[Tuple[int, int]] = []
+        self.highlight_squares: List[Tuple[int, int]] = []   # ô đi bình thường
+        self.capture_squares: List[Tuple[int, int]] = []     # ô có thể ăn quân
+        self.last_move_squares: List[Tuple[int, int]] = []   # from / to của nước cuối
 
-        # Đếm số nước đi (ply)
+        # Đếm số ply (mỗi lần một bên đi 1 nước)
         self.ply_count: int = 0
 
-        # Đồng hồ cờ vua (đếm ngược, mỗi bên CHESS_TIME_LIMIT_SEC giây)
+        # Đồng hồ cờ vua: mỗi bên có CHESS_TIME_LIMIT_SEC giây, đếm ngược
         self.white_time_sec: float = float(CHESS_TIME_LIMIT_SEC)
         self.black_time_sec: float = float(CHESS_TIME_LIMIT_SEC)
 
-        # Danh sách nước hợp lệ hiện tại (UCI)
+        # Danh sách nước hợp lệ (dưới dạng UCI)
         self.legal_moves_uci: List[str] = generate_legal_moves(self.board)
 
         # Trạng thái game
         self.game_over: bool = False
         self.game_result: str = "ongoing"  # 'white_win' | 'black_win' | 'draw' | 'ongoing'
-        self.game_over_reason: str = ""    # "Checkmate" | "Stalemate" | "Time out" | ...
-        self.status_text: str = ""         # string hiển thị trên HUD
+        self.game_over_reason: str = ""
+        self.status_text: str = ""         # "Check!", "White wins...", ...
 
         # ====== PHONG CẤP ======
         self.promotion_active: bool = False
         self.promotion_choices: Dict[str, str] = {}  # 'Q'/'R'/'B'/'N' -> uci
         self.promotion_buttons: List[Button] = []
 
+        # ====== PAUSE MENU ======
+        self.paused: bool = False
+        self.pause_buttons: List[Button] = []
+
         # ====== GAME OVER OVERLAY ======
         self.game_over_buttons: List[Button] = []
+        self.font_title_big = pygame.font.Font(None, int(72 * FONT_SCALE))
+        self.font_title_small = pygame.font.Font(None, int(40 * FONT_SCALE))
+        self.font_button = pygame.font.Font(None, int(36 * FONT_SCALE))
 
-    # ------------------------------------------------------------------
-    #  Helpers chung
-    # ------------------------------------------------------------------
+    # ---------- Helpers chung ----------
 
     @staticmethod
     def _uci_to_from_to(uci: str) -> Tuple[Tuple[int, int], Tuple[int, int]]:
@@ -103,13 +100,15 @@ class GameLocalScene(SceneBase):
                 res.append(uci)
         return res
 
+    # ---------- Cập nhật kết quả / luật ----------
+
     def _update_game_status(self):
         """
-        Cập nhật self.game_over, self.game_result, self.status_text
-        theo luật cờ (KHÔNG đụng tới case hết giờ).
+        Cập nhật self.game_over, self.game_result, self.status_text,...
+        sau mỗi nước đi (theo luật cờ, KHÔNG tính hết giờ).
         """
         if self.game_over:
-            # Nếu đã hết giờ / đã game over rồi thì không override nữa
+            # Nếu đã hết giờ / resign rồi thì không override nữa
             return
 
         status = get_game_result(self.board)
@@ -117,6 +116,7 @@ class GameLocalScene(SceneBase):
 
         if status != "ongoing":
             self.game_over = True
+            self.paused = False  # đã kết thúc thì không pause nữa
 
             # Phân loại lý do
             if self.board.is_checkmate():
@@ -157,25 +157,26 @@ class GameLocalScene(SceneBase):
         try:
             self.board.apply_uci(uci)
         except ValueError:
-            # Không làm gì nếu move fail
+            self.selected_square = None
+            self.highlight_squares = []
+            self.capture_squares = []
             return False
 
         # Ghi lại nước đi cuối
         self.last_move_squares = [src, dst]
 
-        # Tăng ply
+        # Tăng số ply
         self.ply_count += 1
 
-        # Làm mới danh sách nước hợp lệ
+        # Refresh nước hợp lệ + reset highlight
         self.legal_moves_uci = generate_legal_moves(self.board)
-
-        # Clear selection / highlight
         self.selected_square = None
         self.highlight_squares = []
         self.capture_squares = []
 
-        # Cập nhật trạng thái game theo luật
+        # Cập nhật trạng thái thắng/thua/hòa
         self._update_game_status()
+
         return True
 
     def _on_flag_timeout(self, white_flag: bool):
@@ -188,6 +189,7 @@ class GameLocalScene(SceneBase):
             return
 
         self.game_over = True
+        self.paused = False
         self.game_over_reason = "Time out"
 
         if white_flag:
@@ -199,9 +201,57 @@ class GameLocalScene(SceneBase):
 
         self._create_game_over_buttons()
 
-    # ------------------------------------------------------------------
-    #  PHONG CẤP
-    # ------------------------------------------------------------------
+    # ---------- PAUSE MENU ----------
+
+    def _set_paused(self, value: bool):
+        """
+        Bật / tắt pause.
+        Không cho pause nếu game đã over hoặc đang popup phong cấp.
+        """
+        if self.game_over or self.promotion_active:
+            self.paused = False
+            self.pause_buttons.clear()
+            return
+
+        self.paused = value
+        self.pause_buttons.clear()
+        if value:
+            self._create_pause_buttons()
+
+    def _create_pause_buttons(self):
+        """Tạo nút Resume / Back to Menu cho pause menu."""
+        btn_w = int(TILE_SIZE * 3.0)
+        btn_h = int(TILE_SIZE * 0.8)
+        gap = int(TILE_SIZE * 0.5)
+
+        center_x = SCREEN_WIDTH // 2
+        center_y = SCREEN_HEIGHT // 2 + int(TILE_SIZE * 0.6)
+
+        # Resume
+        rect_resume = pygame.Rect(0, 0, btn_w, btn_h)
+        rect_resume.center = (center_x - (btn_w // 2 + gap // 2), center_y)
+        self.pause_buttons.append(
+            Button(
+                rect_resume,
+                "Resume",
+                self.font_button,
+                callback=lambda: self._set_paused(False),
+            )
+        )
+
+        # Back to Menu
+        rect_menu = pygame.Rect(0, 0, btn_w, btn_h)
+        rect_menu.center = (center_x + (btn_w // 2 + gap // 2), center_y)
+        self.pause_buttons.append(
+            Button(
+                rect_menu,
+                "Back to Menu",
+                self.font_button,
+                callback=self._on_back_to_menu,
+            )
+        )
+
+    # ---------- PHONG CẤP: UI & logic ----------
 
     def _start_promotion_choice(self, promotion_moves: List[str]):
         """
@@ -227,7 +277,6 @@ class GameLocalScene(SceneBase):
         for i, piece_code in enumerate(order):
             if piece_code not in self.promotion_choices:
                 continue
-
             rect = pygame.Rect(0, 0, btn_size, btn_size)
             rect.topleft = (start_x + i * (btn_size + gap), center_y)
 
@@ -259,9 +308,12 @@ class GameLocalScene(SceneBase):
         self.promotion_choices.clear()
         self.promotion_buttons.clear()
 
-    # ------------------------------------------------------------------
-    #  GAME OVER OVERLAY
-    # ------------------------------------------------------------------
+        # Reset chọn ô
+        self.selected_square = None
+        self.highlight_squares = []
+        self.capture_squares = []
+
+    # ---------- GAME OVER OVERLAY ----------
 
     def _create_game_over_buttons(self):
         """Tạo nút Play Again / Back to Menu khi game over."""
@@ -296,9 +348,7 @@ class GameLocalScene(SceneBase):
         from .menu_main import MainMenuScene
         self.app.change_scene(MainMenuScene)
 
-    # ------------------------------------------------------------------
-    #  EVENT HANDLING
-    # ------------------------------------------------------------------
+    # ---------- Event handling ----------
 
     def handle_events(self, events: List[pygame.event.Event]):
         # Ưu tiên: nếu đang chọn phong cấp
@@ -315,12 +365,22 @@ class GameLocalScene(SceneBase):
                     btn.handle_event(event)
             return
 
+        # Nếu đang pause: chỉ xử lý pause menu + ESC
+        if self.paused:
+            for event in events:
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    # ESC lần nữa để tiếp tục
+                    self._set_paused(False)
+                for btn in self.pause_buttons:
+                    btn.handle_event(event)
+            return
+
         # Bình thường
         for event in events:
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
-                    from .menu_main import MainMenuScene
-                    self.app.change_scene(MainMenuScene)
+                    # Trước đây ESC thoát thẳng, giờ là mở pause
+                    self._set_paused(True)
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 self._handle_left_click(event.pos)
 
@@ -351,10 +411,8 @@ class GameLocalScene(SceneBase):
         file, rank = sq
         piece_symbol = self.board.piece_symbol_at(file, rank)
 
-        # --------------------------------------------------------------
-        #  Chưa chọn quân -> chọn quân
-        # --------------------------------------------------------------
         if self.selected_square is None:
+            # Chưa chọn quân
             if not piece_symbol:
                 return
 
@@ -370,7 +428,6 @@ class GameLocalScene(SceneBase):
 
             for uci in moves_from:
                 _, (tf, tr) = self._uci_to_from_to(uci)
-
                 # Ô đích hiện tại có quân đối phương? -> nước ăn
                 dest_piece = self.board.piece_symbol_at(tf, tr)
                 if dest_piece and (dest_piece.isupper() != self.board.turn_white):
@@ -382,60 +439,56 @@ class GameLocalScene(SceneBase):
             self.capture_squares = capture_squares
             return
 
-        # --------------------------------------------------------------
-        #  Đã chọn quân -> chọn đích
-        # --------------------------------------------------------------
-        src_file, src_rank = self.selected_square
+        else:
+            # Đã chọn quân, giờ chọn đích
+            src_file, src_rank = self.selected_square
 
-        # Click lại đúng ô đang chọn -> bỏ chọn
-        if (file, rank) == (src_file, src_rank):
-            self.selected_square = None
-            self.highlight_squares = []
-            self.capture_squares = []
-            return
+            if (file, rank) == (src_file, src_rank):
+                # Bỏ chọn
+                self.selected_square = None
+                self.highlight_squares = []
+                self.capture_squares = []
+                return
 
-        candidate_moves = self._legal_moves_from_square(src_file, src_rank)
+            candidate_moves = self._legal_moves_from_square(src_file, src_rank)
 
-        promotion_moves: List[str] = []
-        normal_move: Optional[str] = None
+            promotion_moves: List[str] = []
+            normal_move: Optional[str] = None
 
-        for uci in candidate_moves:
-            (_, _), (tf, tr) = self._uci_to_from_to(uci)
-            if tf == file and tr == rank:
-                if len(uci) == 5:
-                    promotion_moves.append(uci)
-                else:
-                    normal_move = uci
+            for uci in candidate_moves:
+                (_, _), (tf, tr) = self._uci_to_from_to(uci)
+                if tf == file and tr == rank:
+                    if len(uci) == 5:
+                        promotion_moves.append(uci)
+                    else:
+                        normal_move = uci
 
-        # Nếu là ô phong cấp -> bật popup
-        if promotion_moves:
-            self._start_promotion_choice(promotion_moves)
-            return
+            if promotion_moves:
+                # Bật UI chọn phong cấp
+                self._start_promotion_choice(promotion_moves)
+                return
 
-        if normal_move is None:
-            # Click vào chỗ không hợp lệ -> clear chọn
-            self.selected_square = None
-            self.highlight_squares = []
-            self.capture_squares = []
-            return
+            if normal_move is None:
+                self.selected_square = None
+                self.highlight_squares = []
+                self.capture_squares = []
+                return
 
-        # Thực hiện nước đi thường
-        success = self._apply_move_and_update_state(normal_move)
-        if not success:
-            self.selected_square = None
-            self.highlight_squares = []
-            self.capture_squares = []
+            success = self._apply_move_and_update_state(normal_move)
+            if not success:
+                self.selected_square = None
+                self.highlight_squares = []
+                self.capture_squares = []
+                return
 
-    # ------------------------------------------------------------------
-    #  UPDATE & RENDER
-    # ------------------------------------------------------------------
+    # ---------- Update & Render ----------
 
     def update(self, dt: float):
         """
         dt: số giây trôi qua giữa 2 frame (GameApp truyền vào).
         Dùng để cập nhật đồng hồ cờ vua (đếm ngược).
         """
-        if self.game_over or self.promotion_active:
+        if self.game_over or self.promotion_active or self.paused:
             return
 
         if self.board.turn_white:
@@ -452,19 +505,17 @@ class GameLocalScene(SceneBase):
     def render(self, surface: pygame.Surface):
         surface.fill(COLOR_BG)
 
-        # Bàn cờ + hiệu ứng
+        # Bàn + quân
         draw_board(
             surface,
             self.selected_square,
             self.highlight_squares,
-            self.capture_squares,
             self.last_move_squares,
+            self.capture_squares,  # ô ăn quân
         )
-
-        # Quân cờ
         draw_pieces(surface, self.board, self.font_piece)
 
-        # HUD trên cùng (turn + status)
+        # HUD trên cùng (giữ cho kiến trúc thống nhất)
         draw_hud(
             surface,
             self.board,
@@ -485,15 +536,15 @@ class GameLocalScene(SceneBase):
             self.status_text,
         )
 
-        # Overlay (game over / phong cấp)
+        # Overlay ưu tiên nằm trên cùng
         if self.game_over:
             self._render_game_over_overlay(surface)
         elif self.promotion_active:
             self._render_promotion_popup(surface)
+        elif self.paused:
+            self._render_pause_overlay(surface)
 
-    # ------------------------------------------------------------------
-    #  RENDER OVERLAY
-    # ------------------------------------------------------------------
+    # ---------- Render overlay ----------
 
     def _render_promotion_popup(self, surface: pygame.Surface):
         overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
@@ -542,4 +593,26 @@ class GameLocalScene(SceneBase):
 
         # Nút
         for btn in self.game_over_buttons:
+            btn.draw(surface)
+
+    def _render_pause_overlay(self, surface: pygame.Surface):
+        """Overlay khi pause: tối nền + chữ PAUSED + nút Resume / Back."""
+        overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 160))
+        surface.blit(overlay, (0, 0))
+
+        # Tiêu đề
+        title_surf = self.font_title_big.render("PAUSED", True, COLOR_TEXT)
+        title_rect = title_surf.get_rect(
+            center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - int(TILE_SIZE * 1.2))
+        )
+        surface.blit(title_surf, title_rect)
+
+        subtitle_surf = self.font_title_small.render("Local game", True, COLOR_TEXT)
+        subtitle_rect = subtitle_surf.get_rect(
+            center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - int(TILE_SIZE * 0.6))
+        )
+        surface.blit(subtitle_surf, subtitle_rect)
+
+        for btn in self.pause_buttons:
             btn.draw(surface)

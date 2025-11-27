@@ -1,11 +1,10 @@
-# filepath: c:\Users\Win 10\Desktop\Update Machine learning\Chess_AI_Project\game\scenes\game_online.py
 # game/scenes/game_online.py
 import pygame
 from typing import List, Tuple, Optional, Dict, Any
 
 from .base import SceneBase
 from core.board import Board
-from core.rules import generate_legal_moves, get_game_result
+from core.rules import generate_legal_moves
 from game.config import (
     COLOR_BG,
     COLOR_TEXT,
@@ -42,6 +41,7 @@ class GameOnlineScene(SceneBase):
         self.room_id = room_id
         self.player_color = player_color  # "white" / "black"
 
+        # ----- Core board state -----
         self.board = Board()
         self.font_piece = pygame.font.Font(None, int(40 * FONT_SCALE))
         self.font_hud = pygame.font.Font(None, int(32 * FONT_SCALE))
@@ -61,12 +61,10 @@ class GameOnlineScene(SceneBase):
         self._server_black_time: float = 0.0
         self._last_clock_sync: float = 0.0  # giây, pygame.time.get_ticks()/1000.0
 
-
-        self.legal_moves_uci: List[str] = []  # chỉ dùng để highlight / client-side UX
-
+        # Legal moves client-side (chỉ để highlight UX)
         self.legal_moves_uci: List[str] = generate_legal_moves(self.board)
 
-
+        # Trạng thái game
         self.game_over = False
         self.game_result: str = "ongoing"
         self.game_over_reason: str = ""
@@ -76,6 +74,10 @@ class GameOnlineScene(SceneBase):
         self.promotion_active: bool = False
         self.promotion_choices: Dict[str, str] = {}
         self.promotion_buttons: List[Button] = []
+
+        # ========= Pause menu =========
+        self.paused: bool = False
+        self.pause_buttons: List[Button] = []
 
         # ========= Game over overlay =========
         self.game_over_buttons: List[Button] = []
@@ -101,18 +103,25 @@ class GameOnlineScene(SceneBase):
                 res.append(uci)
         return res
 
+    # ---------- Game status (theo server) ----------
+
     def _update_game_status_from_server(self, result: str):
         """
         Server gửi result trực tiếp: 'white_win' | 'black_win' | 'draw' | 'ongoing'.
         Ta dùng để set game_over + text.
         """
         self.game_result = result
+
         if result == "ongoing":
             self.game_over = False
             self.game_over_reason = ""
             return
 
+        # Nếu server báo ván đã kết thúc -> tắt pause luôn
         self.game_over = True
+        self.paused = False
+        self.pause_buttons.clear()
+
         if result == "white_win":
             self.status_text = "White wins"
         elif result == "black_win":
@@ -127,10 +136,91 @@ class GameOnlineScene(SceneBase):
         self._create_game_over_buttons()
 
     def _on_flag_timeout(self, white_flag: bool):
-        # Online hiện chưa dùng đồng hồ, giữ cho API giống local.
+        # Online hiện đồng hồ do server quyết định, nên client không tự xử lý.
         pass
 
-    # ---------- Promotion UI (local only, dùng để chọn piece cho UCI có 5 kí tự) ----------
+    # ---------- Pause menu ----------
+
+    def _set_paused(self, value: bool):
+        """
+        Bật / tắt pause.
+        - Không pause khi game đã over.
+        - Hạn chế pause trong lúc đang popup phong cấp để tránh bug input.
+        """
+        if self.game_over:
+            self.paused = False
+            self.pause_buttons.clear()
+            return
+        if self.promotion_active:
+            # bắt chọn phong cấp xong đã, rồi mới cho pause
+            self.paused = False
+            self.pause_buttons.clear()
+            return
+
+        self.paused = value
+        self.pause_buttons.clear()
+        if value:
+            self._create_pause_buttons()
+
+    def _create_pause_buttons(self):
+        """
+        Nút trong pause menu:
+        - Resume
+        - Offer Draw (gửi message lên server)
+        - Resign (đầu hàng)
+        - Back to Menu
+        """
+        btn_w = int(TILE_SIZE * 3.0)
+        btn_h = int(TILE_SIZE * 0.8)
+        gap_x = int(TILE_SIZE * 0.3)
+        center_x = SCREEN_WIDTH // 2
+        center_y = SCREEN_HEIGHT // 2 + int(TILE_SIZE * 0.8)
+
+        labels_callbacks = [
+            ("Resume", lambda: self._set_paused(False)),
+            ("Offer Draw", self._on_offer_draw),
+            ("Resign", self._on_resign),
+            ("Back to Menu", self._on_back_to_menu),
+        ]
+
+        total_width = 4 * btn_w + 3 * gap_x
+        start_x = center_x - total_width // 2
+
+        self.pause_buttons.clear()
+        for i, (label, cb) in enumerate(labels_callbacks):
+            rect = pygame.Rect(0, 0, btn_w, btn_h)
+            rect.center = (start_x + i * (btn_w + gap_x) + btn_w // 2, center_y)
+            self.pause_buttons.append(Button(rect, label, self.font_button, callback=cb))
+
+    def _on_offer_draw(self):
+        """Gửi yêu cầu hoà lên server (nếu server hỗ trợ)."""
+        if not self.client.connected:
+            self.status_text = "Disconnected"
+        else:
+            try:
+                self.client.send_message({"type": "offer_draw"})
+                self.status_text = "Draw offer sent"
+            except Exception:
+                self.status_text = "Failed to send draw offer"
+        # không auto đóng pause cũng được, nhưng cho gọn:
+        self._set_paused(False)
+
+    def _on_resign(self):
+        """
+        Gửi đầu hàng lên server.
+        Kết quả thật do server báo lại qua message 'state'.
+        """
+        if not self.client.connected:
+            self.status_text = "Disconnected"
+        else:
+            try:
+                self.client.send_message({"type": "resign"})
+                self.status_text = "You resigned (waiting server)"
+            except Exception:
+                self.status_text = "Failed to send resign"
+        self._set_paused(False)
+
+    # ---------- Promotion UI ----------
 
     def _start_promotion_choice(self, promotion_moves: List[str]):
         self.promotion_active = True
@@ -186,15 +276,13 @@ class GameOnlineScene(SceneBase):
 
         btn_w = int(TILE_SIZE * 3.0)
         btn_h = int(TILE_SIZE * 0.8)
-        gap = int(TILE_SIZE * 0.5)
-
         center_x = SCREEN_WIDTH // 2
         center_y = SCREEN_HEIGHT // 2 + int(TILE_SIZE * 0.8)
 
-        rect_again = pygame.Rect(0, 0, btn_w, btn_h)
-        rect_again.center = (center_x - (btn_w // 2 + gap // 2), center_y)
+        rect_menu = pygame.Rect(0, 0, btn_w, btn_h)
+        rect_menu.center = (center_x, center_y)
         self.game_over_buttons.append(
-            Button(rect_again, "Back to Menu", self.font_button, callback=self._on_back_to_menu)
+            Button(rect_menu, "Back to Menu", self.font_button, callback=self._on_back_to_menu)
         )
 
     def _on_back_to_menu(self):
@@ -212,6 +300,7 @@ class GameOnlineScene(SceneBase):
             if isinstance(fen, str):
                 self.board.import_fen(fen)
 
+            # Nước đi cuối
             self.last_move_squares = []
             last_uci = msg.get("last_move")
             if isinstance(last_uci, str):
@@ -220,7 +309,7 @@ class GameOnlineScene(SceneBase):
 
             turn = msg.get("turn", "white")
 
-            # ====== CLOCK: lấy từ server ======
+            # ====== CLOCK: lấy từ server + set mốc sync ======
             tw = msg.get("time_white")
             tb = msg.get("time_black")
             if isinstance(tw, (int, float)):
@@ -229,6 +318,7 @@ class GameOnlineScene(SceneBase):
                 self._server_black_time = float(tb)
             self._last_clock_sync = pygame.time.get_ticks() / 1000.0
 
+            # Giá trị hiển thị ban đầu = giá trị server
             self.white_time_sec = self._server_white_time
             self.black_time_sec = self._server_black_time
 
@@ -276,10 +366,12 @@ class GameOnlineScene(SceneBase):
     # ---------- Event handling ----------
 
     def handle_events(self, events: List[pygame.event.Event]):
+        # 1. Đang popup phong cấp
         if self.promotion_active and not self.game_over:
             self._handle_promotion_events(events)
             return
 
+        # 2. Game over -> chỉ xử lý overlay + ESC
         if self.game_over:
             for event in events:
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
@@ -288,10 +380,21 @@ class GameOnlineScene(SceneBase):
                     btn.handle_event(event)
             return
 
+        # 3. Đang pause -> chỉ xử lý nút pause + ESC (resume)
+        if self.paused:
+            for event in events:
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    self._set_paused(False)
+                for btn in self.pause_buttons:
+                    btn.handle_event(event)
+            return
+
+        # 4. Bình thường
         for event in events:
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
-                    self._on_back_to_menu()
+                    # online: ESC -> pause, không thoát thẳng
+                    self._set_paused(True)
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 self._handle_left_click(event.pos)
 
@@ -333,6 +436,7 @@ class GameOnlineScene(SceneBase):
             ):
                 return
 
+            # Chỉ chọn quân khi đúng lượt mình
             if (self.player_color == "white" and not self.board.turn_white) or (
                 self.player_color == "black" and self.board.turn_white
             ):
@@ -385,12 +489,13 @@ class GameOnlineScene(SceneBase):
     # ---------- Update & Render ----------
 
     def update(self, dt: float):
+        # Online: luôn update mạng & clock, kể cả khi pause
         self._update_from_network()
-        # Không chạy đồng hồ local (server chưa hỗ trợ), time panel chỉ để tham khảo
-         # nội suy clock để đếm ngược từng giây trên client
-        if self.game_result != "ongoing":
-            return  # game over thì không cần chạy clock nữa
 
+        if self.game_result != "ongoing":
+            return  # game over thì không cần nội suy clock nữa
+
+        # Nội suy clock để đếm ngược từng giây trên client
         now = pygame.time.get_ticks() / 1000.0
         elapsed = max(0.0, now - self._last_clock_sync)
 
@@ -407,13 +512,13 @@ class GameOnlineScene(SceneBase):
     def render(self, surface: pygame.Surface):
         surface.fill(COLOR_BG)
 
-        # GỌI Y HỆT LOCAL, CHỈ KHÁC LÀ capture_squares = []
+        # Gọi giống local: selected, move_squares, last_move_squares, capture_squares
         draw_board(
             surface,
-            self.selected_square,      # selected_square
-            self.highlight_squares,    # move_squares
-            [],                        # capture_squares (online chưa tách riêng, để trống)
-            self.last_move_squares,    # last_move_squares (đã set từ server)
+            self.selected_square,
+            self.highlight_squares,
+            self.last_move_squares,
+            [],  # capture_squares: online chưa tách riêng
         )
 
         draw_pieces(surface, self.board, self.font_piece)
@@ -441,7 +546,8 @@ class GameOnlineScene(SceneBase):
             self._render_game_over_overlay(surface)
         elif self.promotion_active:
             self._render_promotion_popup(surface)
-
+        elif self.paused:
+            self._render_pause_overlay(surface)
 
     # ---------- Overlays ----------
 
@@ -488,4 +594,26 @@ class GameOnlineScene(SceneBase):
             surface.blit(reason_surf, reason_rect)
 
         for btn in self.game_over_buttons:
+            btn.draw(surface)
+
+    def _render_pause_overlay(self, surface: pygame.Surface):
+        """Overlay khi pause online: tối nền + PAUSED + nút menu."""
+        overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 160))
+        surface.blit(overlay, (0, 0))
+
+        title_surf = self.font_title_big.render("PAUSED", True, COLOR_TEXT)
+        title_rect = title_surf.get_rect(
+            center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - int(TILE_SIZE * 1.2))
+        )
+        surface.blit(title_surf, title_rect)
+
+        subtitle = "Online game (server still running)"
+        subtitle_surf = self.font_title_small.render(subtitle, True, COLOR_TEXT)
+        subtitle_rect = subtitle_surf.get_rect(
+            center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - int(TILE_SIZE * 0.6))
+        )
+        surface.blit(subtitle_surf, subtitle_rect)
+
+        for btn in self.pause_buttons:
             btn.draw(surface)
