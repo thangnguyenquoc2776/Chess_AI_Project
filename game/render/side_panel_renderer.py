@@ -54,6 +54,7 @@ def draw_side_panels(
     ply_count: int,
     turn_white: bool,
     status_text: str,
+    info_text: str,
 ):
     """
     Vẽ 2 panel:
@@ -111,6 +112,16 @@ def draw_side_panels(
         move_rect = move_surf.get_rect(center=(cx, center_y + line_h))
         surface.blit(move_surf, move_rect)
 
+        # ----- INFO_TEXT: vẽ từng dòng bên dưới Move -----
+        info_start_y = center_y + line_h * 2
+        for i, line in enumerate(info_text.split("\n")):
+            line = line.strip()
+            if not line:
+                continue
+            info_surf = font.render(line, True, COLOR_TEXT)
+            info_rect = info_surf.get_rect(center=(cx, info_start_y + i * line_h))
+            surface.blit(info_surf, info_rect)
+
     # ---------- PANEL PHẢI: CLOCK ----------
     if right_width >= 160:
         cx = right_x + right_width // 2
@@ -138,3 +149,5 @@ def draw_side_panels(
         black_surf = font.render(f"Black: {b_time} {b_tag}", True, COLOR_TEXT)
         black_rect = black_surf.get_rect(center=(cx, center_y))
         surface.blit(black_surf, black_rect)
+
+

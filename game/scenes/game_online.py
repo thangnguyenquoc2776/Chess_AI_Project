@@ -73,7 +73,12 @@ class GameOnlineScene(SceneBase):
         self.game_over = False
         self.game_result: str = "ongoing"
         self.game_over_reason: str = ""
-        self.status_text: str = f"Room {room_id} | You are {player_color}"
+        #!
+        self.status_text: str = ""
+        self.info_text: str = (
+            f"Room {room_id}\n"
+            f"You are {player_color}\n"
+        )
 
         # ========= Promotion =========
         self.promotion_active: bool = False
@@ -305,7 +310,7 @@ class GameOnlineScene(SceneBase):
             fen = msg.get("fen")
             if isinstance(fen, str):
                 self.board.import_fen(fen)
-                
+
             self._has_initial_state = True
 
             self.last_move_squares = []
@@ -329,7 +334,28 @@ class GameOnlineScene(SceneBase):
             self.white_time_sec = self._server_white_time
             self.black_time_sec = self._server_black_time
 
-            self.status_text = f"Your color: {self.player_color} | Turn: {turn}"
+            #!
+            # self.status_text = f"Your color: {self.player_color}\n" f"Turn: {turn}"
+
+            self.info_text = (
+                f"Room {self.room_id}\n"
+                f"You are {self.player_color}\n"
+                f"Turn: {turn}"
+            )
+
+            if isinstance(fen, str):
+                parts = fen.split()
+                if len(parts) >= 6:
+                    try:
+                        fullmove = int(parts[5])
+                    except ValueError:
+                        fullmove = 1
+                    # fullmove: 1,2,3...
+                    base_ply = (fullmove - 1) * 2
+                    # nếu tới lượt đen thì đã có thêm 1 ply
+                    self.ply_count = base_ply + (0 if turn == "white" else 1)
+                else:
+                    self.ply_count = 0
 
             result = msg.get("result", "ongoing")
             self._update_game_status_from_server(result)
@@ -536,7 +562,7 @@ class GameOnlineScene(SceneBase):
             surface,
             self.board,
             self.font_hud,
-            self.status_text,
+            "",
             game_over=self.game_over,
             game_result=self.game_result,
         )
@@ -549,6 +575,7 @@ class GameOnlineScene(SceneBase):
             self.ply_count,
             self.board.turn_white,
             self.status_text,
+            self.info_text,
         )
 
         if self.game_over:
