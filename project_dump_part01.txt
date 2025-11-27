@@ -1,0 +1,1978 @@
+===== PROJECT TREE =====
+./
+├── export_project.py
+├── main.py
+├── core
+│   ├── board.py
+│   ├── history.py
+│   ├── init.py
+│   └── rules.py
+├── game
+│   ├── ai_hook.py
+│   ├── app.py
+│   ├── config.py
+│   ├── init.py
+│   ├── input
+│   │   └── mouse.py
+│   ├── render
+│   │   ├── board_renderer.py
+│   │   ├── hud_renderer.py
+│   │   ├── piece_renderer.py
+│   │   └── side_panel_renderer.py
+│   ├── save
+│   │   └── save_manager.py
+│   ├── scenes
+│   │   ├── base.py
+│   │   ├── game_local.py
+│   │   ├── init.py
+│   │   └── menu_main.py
+│   └── ui
+│       └── widgets.py
+└── scripts
+    ├── init.py
+    └── run_game.py
+
+===== FILE MANIFEST =====
+- export_project.py — 24009 bytes — ok
+- main.py — 104 bytes — ok
+- core/board.py — 3718 bytes — ok
+- core/history.py — 574 bytes — ok
+- core/init.py — 46 bytes — ok
+- core/rules.py — 408 bytes — ok
+- game/ai_hook.py — 629 bytes — ok
+- game/app.py — 1298 bytes — ok
+- game/config.py — 1993 bytes — ok
+- game/init.py — 20 bytes — ok
+- game/input/mouse.py — 902 bytes — ok
+- game/render/board_renderer.py — 1620 bytes — ok
+- game/render/hud_renderer.py — 715 bytes — ok
+- game/render/piece_renderer.py — 1096 bytes — ok
+- game/render/side_panel_renderer.py — 3766 bytes — ok
+- game/save/save_manager.py — 773 bytes — ok
+- game/scenes/base.py — 504 bytes — ok
+- game/scenes/game_local.py — 18225 bytes — ok
+- game/scenes/init.py — 27 bytes — ok
+- game/scenes/menu_main.py — 2022 bytes — ok
+- game/ui/widgets.py — 1362 bytes — ok
+- scripts/init.py — 23 bytes — ok
+- scripts/run_game.py — 339 bytes — ok
+
+
+
+Folder .
+File export_project.py
+# -*- coding: utf-8 -*-
+"""
+Exporter v3.4 — TXT + DOCX (SIMPLE-TNR) with OVERVIEW (Tree + Manifest)
+- Tất cả văn bản trong DOCX: Times New Roman 14, không italic/shading, không code-style.
+- Phần đầu tài liệu: PROJECT TREE (ASCII) + FILE MANIFEST (dir_rel/filename + size + status).
+- Lọc phạm vi: --include-dirs, --include-names, --names-root-only.
+- Chia nhỏ đầu ra (--split-chars), log CSV, report MD.
+- Ví dụ: chỉ lấy Classes/**/*.cpp|.h + CMakeLists.txt (gốc).
+
+pip install python-docx tqdm colorama
+"""
+
+import os, re, sys, csv, argparse
+from pathlib import Path
+from typing import List, Set, Tuple, Optional, Dict, Any
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from docx import Document
+from docx.shared import Pt
+from docx.oxml.ns import qn
+from docx.enum.style import WD_STYLE_TYPE
+
+from tqdm import tqdm
+try:
+    import colorama
+    colorama.just_fix_windows_console()
+except Exception:
+    pass
+
+# --------- tên file đặc biệt (luôn cho phép) ----------
+CODE_BASENAMES = {
+    "CMakeLists.txt", "Makefile", "makefile", ".gitignore", ".gitattributes", "BUILD", "WORKSPACE"
+}
+
+# --------- preset gọn ----------
+PRESETS = {
+    "cpp": {
+        "exts": {".c",".cc",".cpp",".cxx",".h",".hh",".hpp",".hxx",".m",".mm",".cmake"},
+        "basenames": CODE_BASENAMES,
+        "extra_exclude": set(),
+    },
+    "cocos": {
+        "exts": {".c",".cc",".cpp",".cxx",".h",".hh",".hpp",".hxx",".m",".mm",".cmake",
+                 ".glsl",".vert",".frag"},
+        "basenames": CODE_BASENAMES,
+        "extra_exclude": set(),
+    },
+}
+
+EXCLUDE_DIRS_DEFAULT: Set[str] = {
+    ".git",".svn",".hg",".idea",".vscode",".vs",".cache","__pycache__",".mypy_cache",".pytest_cache",
+    "node_modules","dist","build","target","out","bin","obj","Library","Temp","Packages",".gradle",
+    ".venv","venv",".nuget","Pods",".expo",".next",".angular","coverage"
+}
+
+SIZE_LIMIT_MB_DEFAULT = 5
+DOCX_RUN_CHUNK = 100_000
+PRINTABLE_WS = set(b"\t\n\r\f\v ")
+
+# --------- utils ----------
+def is_probably_text(sample: bytes) -> bool:
+    if b"\x00" in sample:
+        return False
+    non_print = 0
+    for b in sample:
+        if 32 <= b <= 126:  # ASCII printable
+            continue
+        if b in PRINTABLE_WS:
+            continue
+        if b >= 128:        # UTF-8 multibyte
+            continue
+        non_print += 1
+    return non_print / max(1, len(sample)) <= 0.30
+
+def sanitize_for_docx(text: str) -> str:
+    # bỏ control không hợp lệ với XML (trừ \t \n \r)
+    return re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", text)
+
+def read_text_safely(p: Path, max_bytes: int) -> Tuple[str, str]:
+    try:
+        size = p.stat().st_size
+    except Exception as e:
+        return "error", f"[ERROR: cannot stat this file: {e}]\n"
+    if size > max_bytes:
+        return "skipped_large", f"[SKIPPED: file too large > {max_bytes//(1024*1024)}MB]\n"
+    try:
+        raw = p.read_bytes()
+        if b"\x00" in raw:
+            return "skipped_binary", "[SKIPPED: binary file (NUL found)]\n"
+        if not is_probably_text(raw[: min(8192, len(raw))]):
+            return "skipped_likely_binary", "[SKIPPED: likely binary]\n"
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = raw.decode("utf-8", errors="ignore")
+        return "ok", text
+    except Exception as e:
+        return "error", f"[ERROR reading file: {e}]\n"
+
+def should_exclude_dir(dirname: str, exclude_names: Set[str], include_hidden: bool) -> bool:
+    name = os.path.basename(dirname)
+    if not include_hidden and name.startswith('.'):
+        return True
+    return name in exclude_names
+
+def path_matches_any_dir(path: Path, root: Path, include_dirs: List[str]) -> bool:
+    rel = path.relative_to(root)
+    parts = list(rel.parts)
+    for d in include_dirs:
+        d_parts = d.replace("\\","/").split("/")
+        if parts[:len(d_parts)] == d_parts:
+            return True
+    return False
+
+def should_include_file(
+    path: Path,
+    exts: Optional[Set[str]],
+    include_hidden: bool,
+    basenames: Set[str],
+    root: Path,
+    include_dirs: Optional[List[str]],
+    include_names: Optional[List[str]],
+    names_root_only: bool
+) -> bool:
+    base = path.name
+    if not include_hidden and base.startswith('.'):
+        return False
+
+    # Ưu tiên phạm vi (nếu có)
+    if include_dirs or include_names:
+        ok = False
+        if include_dirs and path_matches_any_dir(path, root, include_dirs):
+            ok = True
+        if include_names and base in set(include_names):
+            if names_root_only:
+                ok = ok or (path.parent.resolve() == root.resolve())
+            else:
+                ok = True
+        if not ok:
+            return False
+        # Trong phạm vi rồi thì tiếp tục lọc theo đuôi hoặc tên đặc biệt
+        if base in basenames:
+            return True
+        return (exts is None) or (path.suffix.lower() in exts)
+
+    # Không chỉ định phạm vi: theo preset/--exts + basenames
+    if base in basenames:
+        return True
+    if exts is None:
+        return True
+    return path.suffix.lower() in exts
+
+# --------- DOCX (SIMPLE-TNR) ----------
+def init_docx_simple() -> Document:
+    doc = Document()
+    normal = doc.styles['Normal']
+    normal.font.name = 'Times New Roman'
+    normal._element.rPr.rFonts.set(qn('w:eastAsia'), 'Times New Roman')
+    normal.font.size = Pt(14)
+
+    # Style nhẹ cho nhãn "Folder/File" (vẫn TNR 14, chỉ đậm)
+    if 'LabelBold' not in [s.name for s in doc.styles]:
+        st = doc.styles.add_style('LabelBold', WD_STYLE_TYPE.PARAGRAPH)
+    else:
+        st = doc.styles['LabelBold']
+    st.font.name = 'Times New Roman'
+    st._element.rPr.rFonts.set(qn('w:eastAsia'), 'Times New Roman')
+    st.font.size = Pt(14)
+    st.font.bold = True
+    return doc
+
+def add_plain_paragraph(doc: Document, text: str, bold=False):
+    p = doc.add_paragraph()
+    r = p.add_run(text)
+    r.font.name = 'Times New Roman'
+    r._element.rPr.rFonts.set(qn('w:eastAsia'), 'Times New Roman')
+    r.font.size = Pt(14)
+    r.bold = bool(bold)
+
+def add_text_block(doc: Document, text: str):
+    """Chèn nội dung văn bản (code) như đoạn thường, TNR 14, giữ \\n."""
+    safe = sanitize_for_docx(text)
+    n = len(safe)
+    start = 0
+    p = doc.add_paragraph()
+    while start < n:
+        part = safe[start : start + DOCX_RUN_CHUNK]
+        run = p.add_run(part)
+        run.font.name = 'Times New Roman'
+        run._element.rPr.rFonts.set(qn('w:eastAsia'), 'Times New Roman')
+        run.font.size = Pt(14)
+        start += DOCX_RUN_CHUNK
+
+# --------- OVERVIEW (TREE + MANIFEST) ----------
+def collect_dir_hierarchy(grouped: Dict[str, List[Dict[str, Any]]]) -> Tuple[Dict[str, List[str]], Dict[str, List[str]]]:
+    """
+    Trả về:
+      - children_dirs[parent_dir] = [child_dir, ...]
+      - files_in_dir[dir] = [filename, ...]
+    Bổ sung cả các thư mục tổ tiên để tree không bị thiếu mắt xích.
+    """
+    # Tập hợp tất cả thư mục đã có + tổ tiên
+    all_dirs = set(grouped.keys())
+    for d in list(all_dirs):
+        if d == ".":
+            continue
+        cur = d
+        while True:
+            par = os.path.dirname(cur) or "."
+            if par not in all_dirs:
+                all_dirs.add(par)
+            if par == ".":
+                break
+            cur = par
+
+    children_dirs: Dict[str, List[str]] = defaultdict(list)
+    files_in_dir: Dict[str, List[str]] = defaultdict(list)
+
+    for d in all_dirs:
+        files_in_dir[d] = []
+
+    for d, items in grouped.items():
+        for it in items:
+            files_in_dir[d].append(it["fname"])
+
+    # Sắp xếp tên thư mục con
+    for d in sorted(all_dirs):
+        if d == ".":
+            par = None
+        else:
+            par = os.path.dirname(d) or "."
+        if par is not None and d != ".":
+            children_dirs[par].append(d)
+
+    for k in children_dirs:
+        # chỉ giữ tên con là basename, nhưng lưu kèm đường dẫn đầy đủ để render đúng thứ tự
+        children_dirs[k] = sorted(children_dirs[k], key=lambda x: x)
+
+    # Sort files
+    for d in files_in_dir:
+        files_in_dir[d] = sorted(files_in_dir[d], key=lambda x: x.lower())
+
+    return children_dirs, files_in_dir
+
+def render_ascii_tree(children_dirs: Dict[str, List[str]], files_in_dir: Dict[str, List[str]]) -> str:
+    """
+    Vẽ ASCII tree kiểu:
+    ./
+    ├── CMakeLists.txt
+    └── Classes
+        ├── core
+        │   └── AppDelegate.cpp
+        ...
+    """
+    lines: List[str] = []
+
+    def name_of(path_rel: str) -> str:
+        return "." if path_rel == "." else os.path.basename(path_rel)
+
+    def recurse(dir_rel: str, prefix: str):
+        # Files trước
+        files = files_in_dir.get(dir_rel, [])
+        dirs  = children_dirs.get(dir_rel, [])
+        total = len(files) + len(dirs)
+        idx = 0
+
+        # Files
+        for i, fn in enumerate(files):
+            idx += 1
+            is_last = (idx == total)
+            lines.append(f"{prefix}{'└──' if is_last and not dirs else '├──'} {fn}")
+
+        # Dirs
+        for j, child in enumerate(dirs):
+            is_last_dir = (j == len(dirs) - 1)
+            connector = "└──" if is_last_dir else "├──"
+            lines.append(f"{prefix}{connector} {name_of(child)}")
+            new_prefix = prefix + ("    " if is_last_dir else "│   ")
+            recurse(child, new_prefix)
+
+    # Root
+    lines.append("./")
+    recurse(".", "")
+    return "\n".join(lines) + "\n"
+
+def render_manifest(grouped: Dict[str, List[Dict[str, Any]]]) -> str:
+    """
+    Liệt kê đường dẫn + size + status (ok/skipped/error).
+    """
+    rows: List[str] = []
+    for d in sorted(grouped.keys(), key=lambda s: (0 if s=="." else 1, s)):
+        for it in sorted(grouped[d], key=lambda x: x["fname"].lower()):
+            size = it.get("size", -1)
+            st   = it.get("status","")
+            path = f"{d}/{it['fname']}" if d != "." else it['fname']
+            rows.append(f"- {path} — {size} bytes — {st}")
+    return "\n".join(rows) + ("\n" if rows else "")
+
+# --------- worker ----------
+def process_one_file(args):
+    root, fullpath, max_bytes = args
+    rel_dir = os.path.relpath(fullpath.parent, root)
+    rel_dir = "." if rel_dir == "." else rel_dir.replace("\\","/")
+    fname = fullpath.name
+    try:
+        size = fullpath.stat().st_size
+    except Exception:
+        size = -1
+    status, payload = read_text_safely(fullpath, max_bytes)
+    return {"dir_rel": rel_dir, "fname": fname, "size": size, "status": status, "text": payload}
+
+# --------- ghi ra (có chia nhỏ) ----------
+def write_outputs_split(
+    grouped: Dict[str, List[Dict[str, Any]]],
+    out_txt_base: Path,
+    out_docx_base: Path,
+    split_chars: int,
+    add_overview: bool
+):
+    # TXT
+    txt_parts: List[Path] = []
+    txt_idx = 1
+    txt_chars = 0
+    if split_chars and split_chars > 0:
+        txt_path = out_txt_base.with_name(f"{out_txt_base.stem}_part{txt_idx:02d}{out_txt_base.suffix}")
+    else:
+        txt_path = out_txt_base
+    ftxt = txt_path.open("w", encoding="utf-8", newline="\n")
+    txt_parts.append(txt_path)
+
+    # DOCX
+    docx_parts: List[Path] = []
+    docx_idx = 1
+    docx_chars = 0
+    doc = init_docx_simple()
+    if split_chars:
+        first_docx = out_docx_base.with_name(f"{out_docx_base.stem}_part{docx_idx:02d}{out_docx_base.suffix}")
+    else:
+        first_docx = out_docx_base
+    docx_parts.append(first_docx)
+
+    def txt_write(s: str):
+        nonlocal txt_chars, ftxt, txt_idx, txt_path
+        ftxt.write(s)
+        txt_chars += len(s)
+        if split_chars and txt_chars >= split_chars:
+            ftxt.close()
+            txt_idx += 1
+            txt_path = out_txt_base.with_name(f"{out_txt_base.stem}_part{txt_idx:02d}{out_txt_base.suffix}")
+            txt_parts.append(txt_path)
+            ftxt = txt_path.open("w", encoding="utf-8", newline="\n")
+            txt_chars = 0
+
+    def docx_rotate_if_needed():
+        nonlocal doc, docx_chars, docx_idx
+        if split_chars and docx_chars >= split_chars:
+            doc.save(str(docx_parts[-1]))
+            docx_idx += 1
+            new_path = out_docx_base.with_name(f"{out_docx_base.stem}_part{docx_idx:02d}{out_docx_base.suffix}")
+            docx_parts.append(new_path)
+            doc = init_docx_simple()
+            docx_chars = 0
+
+    # ---------- OVERVIEW (only at the very beginning / first part) ----------
+    if add_overview:
+        children_dirs, files_in_dir = collect_dir_hierarchy(grouped)
+        tree_text = render_ascii_tree(children_dirs, files_in_dir)
+        manifest_text = render_manifest(grouped)
+
+        # TXT overview
+        txt_write("===== PROJECT TREE =====\n")
+        txt_write(tree_text + "\n")
+        txt_write("===== FILE MANIFEST =====\n")
+        txt_write(manifest_text + "\n\n")
+
+        # DOCX overview
+        add_plain_paragraph(doc, "===== PROJECT TREE =====", bold=True)
+        docx_chars += len("===== PROJECT TREE =====")
+        add_text_block(doc, tree_text)
+        docx_chars += len(tree_text)
+        docx_rotate_if_needed()
+
+        add_plain_paragraph(doc, "===== FILE MANIFEST =====", bold=True)
+        docx_chars += len("===== FILE MANIFEST =====")
+        add_text_block(doc, manifest_text)
+        docx_chars += len(manifest_text)
+        docx_rotate_if_needed()
+
+        # Ngăn cách
+        add_plain_paragraph(doc, "", bold=False)
+        txt_write("\n")
+
+    # ---------- Nội dung theo Folder/File ----------
+    for dir_rel in sorted(grouped.keys(), key=lambda s: (0 if s=="." else 1, s)):
+        # TXT
+        txt_write(f"Folder {dir_rel}\n")
+        # DOCX (nhãn gọn)
+        add_plain_paragraph(doc, f"Folder {dir_rel}", bold=True)
+        docx_chars += len(f"Folder {dir_rel}")
+        docx_rotate_if_needed()
+
+        for item in sorted(grouped[dir_rel], key=lambda x: x["fname"].lower()):
+            fname = item["fname"]
+            content = item["text"]
+
+            txt_write(f"File {fname}\n")
+            txt_write(content.rstrip("\n") + "\n\n")
+
+            add_plain_paragraph(doc, f"File {fname}", bold=True)
+            docx_chars += len(f"File {fname}")
+            add_text_block(doc, content)
+            docx_chars += len(content)
+            docx_rotate_if_needed()
+
+        txt_write("\n")
+
+    ftxt.close()
+    doc.save(str(docx_parts[-1]))
+    return txt_parts, docx_parts
+
+# --------- export chính ----------
+def export_project(
+    root: Path,
+    out_txt: Path,
+    out_docx: Path,
+    log_csv: Path,
+    report_md: Path,
+    exts: Optional[Set[str]],
+    basenames: Set[str],
+    exclude_dirs: Set[str],
+    include_hidden: bool,
+    size_limit_mb: int,
+    workers: int,
+    split_chars: int,
+    include_dirs: Optional[List[str]],
+    include_names: Optional[List[str]],
+    names_root_only: bool,
+    overview: bool
+):
+    max_bytes = size_limit_mb * 1024 * 1024
+    root = root.resolve()
+
+    # Quét ứng viên
+    candidates: List[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+        dirnames[:] = [d for d in sorted(dirnames)
+                       if not should_exclude_dir(os.path.join(dirpath,d), exclude_dirs, include_hidden)]
+        for fname in sorted(filenames):
+            p = Path(dirpath)/fname
+            if should_include_file(
+                p, exts, include_hidden, basenames, root, include_dirs, include_names, names_root_only
+            ):
+                candidates.append(p)
+
+    total = len(candidates)
+    if total == 0:
+        print("Không có file phù hợp. Kiểm tra --include-dirs/--include-names/--exts.")
+        return
+
+    grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    stats = {"ok":0,"skip":0,"error":0}
+    log_rows: List[List[Any]] = []
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+        futures = {ex.submit(process_one_file, (root, p, max_bytes)): p for p in candidates}
+        with tqdm(total=total, desc="Đang đọc & xử lý", unit="file") as bar:
+            for fut in as_completed(futures):
+                p = futures[fut]
+                try:
+                    item = fut.result()
+                except Exception as e:
+                    rel_dir = os.path.relpath(p.parent, root)
+                    rel_dir = "." if rel_dir=="." else rel_dir.replace("\\","/")
+                    log_rows.append([rel_dir, p.name, -1, "error", f"worker exception: {e}"])
+                    stats["error"] += 1
+                    bar.update(1)
+                    bar.set_postfix(ok=stats["ok"], skip=stats["skip"], err=stats["error"])
+                    tqdm.write(f"[ERROR] {p}")
+                    continue
+
+                grouped[item["dir_rel"]].append(item)
+                st = item["status"]; size = item["size"]; note = "" if st=="ok" else item["text"].strip()
+                if st=="ok": stats["ok"] += 1
+                elif st.startswith("skipped"): stats["skip"] += 1
+                else: stats["error"] += 1
+                log_rows.append([item["dir_rel"], item["fname"], size, st, note])
+
+                bar.update(1)
+                bar.set_postfix(ok=stats["ok"], skip=stats["skip"], err=stats["error"])
+                bar.set_description(f"Đang xử lý: {item['fname'][:40]}")
+
+    # Ghi TXT/DOCX
+    with tqdm(total=1, desc="Đang ghi TXT/DOCX") as bar2:
+        txt_parts, docx_parts = write_outputs_split(grouped, out_txt, out_docx, split_chars, add_overview=overview)
+        bar2.update(1)
+
+    # Log CSV
+    with log_csv.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f); w.writerow(["dir_rel","filename","size_bytes","status","note"])
+        w.writerows(log_rows)
+
+    # Report
+    rpt = []
+    rpt.append("# Export Report\n")
+    rpt.append(f"- Root: `{root}`")
+    rpt.append(f"- Tổng file xét: **{total}**")
+    rpt.append(f"- OK: **{stats['ok']}** | SKIP: **{stats['skip']}** | ERROR: **{stats['error']}**\n")
+    rpt.append("## Output files")
+    rpt.append("- TXT: " + ", ".join(f"{p.name}" for p in txt_parts))
+    rpt.append("- DOCX: " + ", ".join(f"{p.name}" for p in docx_parts))
+    if stats["error"] or stats["skip"]:
+        rpt.append("\n## Mục skip/lỗi (tối đa 50)")
+        c = 0
+        for row in log_rows:
+            if row[3] != "ok":
+                rpt.append(f"- `{row[0]}/{row[1]}` — **{row[3]}** — {row[4]}")
+                c += 1
+                if c >= 50: break
+    report_md.write_text("\n".join(rpt), encoding="utf-8")
+
+    print("\n✅ Hoàn tất.")
+    print("TXT :", ", ".join(str(p) for p in txt_parts))
+    print("DOCX:", ", ".join(str(p) for p in docx_parts))
+    print("LOG :", log_csv)
+    print("REPORT:", report_md)
+    print(f"Tổng: {total} | ok={stats['ok']} skip={stats['skip']} err={stats['error']}")
+
+# --------- CLI ----------
+def parse_args(argv: List[str]) -> argparse.Namespace:
+    ap = argparse.ArgumentParser(description="Xuất dự án ra TXT & DOCX (SIMPLE-TNR).")
+    ap.add_argument("--root", default=".", help="Thư mục gốc (mặc định: .)")
+    ap.add_argument("--out-txt", default="project_dump.txt", help="TXT đầu ra (có thể _partNN)")
+    ap.add_argument("--out-docx", default="project_dump.docx", help="DOCX đầu ra (có thể _partNN)")
+    ap.add_argument("--log-csv", default="export_log.csv", help="Log CSV")
+    ap.add_argument("--report-md", default="export_report.md", help="Báo cáo Markdown")
+    ap.add_argument("--size-limit-mb", type=int, default=SIZE_LIMIT_MB_DEFAULT, help="Giới hạn kích cỡ file đọc (MB)")
+    ap.add_argument("--include-hidden", action="store_true", help="Bao gồm file/thư mục ẩn")
+    ap.add_argument("--all", action="store_true", help="Lấy tất cả file văn bản (trừ nhị phân)")
+    ap.add_argument("--exts", nargs="*", default=None, help="Chỉ lấy các đuôi chỉ định (bỏ qua nếu --all)")
+    ap.add_argument("--preset", choices=list(PRESETS.keys()), default="cpp", help="Chọn preset")
+    ap.add_argument("--add-ext", nargs="*", default=None, help="Bổ sung đuôi (vd: --add-ext .proto .conf)")
+    ap.add_argument("--no-default-exclude", action="store_true", help="Không loại trừ thư mục rác mặc định")
+    ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 4)//2), help="Số luồng đọc")
+    ap.add_argument("--split-chars", type=int, default=0, help="Giới hạn kí tự mỗi phần; >0 sẽ tách _partNN")
+    # Phạm vi
+    ap.add_argument("--include-dirs", nargs="*", default=None, help="Chỉ lấy các thư mục (prefix, vd: Classes)")
+    ap.add_argument("--include-names", nargs="*", default=None, help="Thêm các file theo tên (vd: CMakeLists.txt)")
+    ap.add_argument("--names-root-only", action="store_true", help="Các --include-names chỉ áp dụng ở root")
+    # Overview
+    ap.add_argument("--no-overview", action="store_true", help="Tắt phần PROJECT TREE + FILE MANIFEST ở đầu")
+    return ap.parse_args(argv)
+
+def main():
+    args = parse_args(sys.argv[1:])
+    root = Path(args.root).resolve()
+    if not root.exists() or not root.is_dir():
+        print(f"[ERROR] Root '{root}' không tồn tại hoặc không phải thư mục.")
+        sys.exit(2)
+
+    # exts/basenames theo ưu tiên: --all > --exts > --preset
+    basenames: Set[str] = set()
+    extra_exclude: Set[str] = set()
+    if args.all:
+        exts = None
+        basenames = CODE_BASENAMES
+    else:
+        if args.exts:
+            exts = set(args.exts)
+            basenames = CODE_BASENAMES
+        else:
+            preset = PRESETS[args.preset]
+            exts = set(preset["exts"])
+            basenames = set(preset["basenames"])
+            extra_exclude = set(preset.get("extra_exclude", set()))
+
+    if args.add_ext:
+        exts = (set() if exts is None else set(exts)) | set(args.add_ext)
+
+    exclude = set() if args.no_default_exclude else (set(EXCLUDE_DIRS_DEFAULT) | extra_exclude)
+
+    out_txt = root / args.out_txt
+    out_docx = root / args.out_docx
+    log_csv = root / args.log_csv
+    report_md = root / args.report_md
+
+    print("=== CONFIG SUMMARY ===")
+    print(f"Root           : {root}")
+    print(f"Preset         : {args.preset}")
+    print(f"All            : {args.all}")
+    print(f"Exts count     : {'ALL (text-like)' if exts is None else len(exts)}")
+    print(f"Include dirs   : {args.include_dirs}")
+    print(f"Include names  : {args.include_names} (root-only={args.names_root_only})")
+    print(f"Split chars    : {args.split_chars}")
+    print(f"Overview       : {not args.no_overview}")
+    print("======================")
+
+    export_project(
+        root=root,
+        out_txt=out_txt,
+        out_docx=out_docx,
+        log_csv=log_csv,
+        report_md=report_md,
+        exts=exts,
+        basenames=basenames,
+        exclude_dirs=exclude,
+        include_hidden=args.include_hidden,
+        size_limit_mb=max(1, args.size_limit_mb),
+        workers=max(1, args.workers),
+        split_chars=max(0, args.split_chars),
+        include_dirs=args.include_dirs,
+        include_names=args.include_names,
+        names_root_only=args.names_root_only,
+        overview=(not args.no_overview),
+    )
+
+if __name__ == "__main__":
+    main()
+
+File main.py
+# main.py
+from scripts.run_game import main as run_game
+
+if __name__ == "__main__":
+    run_game()
+
+
+Folder core
+File board.py
+# core/board.py
+import chess
+
+
+class Board:
+    """
+    Wrapper quanh python-chess.Board, cung cấp API đơn giản
+    cho GAME & AI dùng chung.
+    """
+
+    def __init__(self, fen: str | None = None):
+        if fen:
+            self._board = chess.Board(fen)
+        else:
+            self._board = chess.Board()
+
+    # --------- Trạng thái & FEN ----------
+
+    def export_fen(self) -> str:
+        """Trả về chuỗi FEN của trạng thái hiện tại."""
+        return self._board.fen()
+
+    def import_fen(self, fen: str) -> None:
+        """Load lại trạng thái từ FEN."""
+        self._board = chess.Board(fen)
+
+    # --------- Lượt đi & thông tin cơ bản ----------
+
+    @property
+    def turn_white(self) -> bool:
+        """True nếu tới lượt trắng đi."""
+        return self._board.turn == chess.WHITE
+
+    def fullmove_number(self) -> int:
+        """Số fullmove (1 = nước đầu tiên của trắng)."""
+        return self._board.fullmove_number
+
+    # --------- Truy vấn quân cờ ----------
+
+    def piece_at(self, file_index: int, rank_index: int):
+        """
+        Lấy chess.Piece (hoặc None) tại ô (file, rank) 0-based:
+        - file_index: 0..7 tương ứng a..h
+        - rank_index: 0..7 tương ứng rank 1..8 (1 ở dưới nếu ta vẽ trắng ở dưới)
+        """
+        square = chess.square(file_index, rank_index)
+        return self._board.piece_at(square)
+
+    def piece_symbol_at(self, file_index: int, rank_index: int) -> str | None:
+        """
+        Trả về ký hiệu 'p','P','k','K',... hoặc None nếu ô trống.
+        lowercase = quân đen, uppercase = quân trắng.
+        """
+        p = self.piece_at(file_index, rank_index)
+        return p.symbol() if p else None
+
+    # --------- Nước đi & luật ----------
+
+    def legal_moves_uci(self) -> list[str]:
+        """Trả về list các nước hợp lệ dạng UCI: 'e2e4', 'g1f3',..."""
+        return [move.uci() for move in self._board.legal_moves]
+
+    def apply_uci(self, uci_move: str) -> None:
+        """
+        Thực hiện một nước đi UCI.
+        Nếu nước đi không hợp lệ sẽ raise ValueError.
+        """
+        move = chess.Move.from_uci(uci_move)
+        if move not in self._board.legal_moves:
+            raise ValueError(f"Illegal move: {uci_move}")
+        self._board.push(move)
+
+    def pop_move(self) -> None:
+        """Hoàn tác một nước (nếu có)."""
+        if self._board.move_stack:
+            self._board.pop()
+
+    # --------- Trạng thái kết thúc ----------
+
+    def is_check(self) -> bool:
+        return self._board.is_check()
+
+    def is_checkmate(self) -> bool:
+        return self._board.is_checkmate()
+
+    def is_stalemate(self) -> bool:
+        return self._board.is_stalemate()
+
+    def is_insufficient_material(self) -> bool:
+        return self._board.is_insufficient_material()
+
+    def is_game_over(self) -> bool:
+        return self._board.is_game_over()
+
+    def result_status(self) -> str:
+        """
+        Trả về:
+        - 'white_win'
+        - 'black_win'
+        - 'draw'
+        - 'ongoing'
+        """
+        if self._board.is_checkmate():
+            # Bên tới lượt hiện tại là bên đang bị chiếu hết
+            loser_white = self.turn_white
+            return "black_win" if loser_white else "white_win"
+
+        if self._board.is_stalemate() or self._board.is_insufficient_material():
+            return "draw"
+
+        # Có thể mở rộng thêm 50-move, 3-fold nếu muốn auto hòa
+        return "ongoing"
+
+File history.py
+# core/history.py
+from collections import Counter
+
+
+class FenHistory:
+    """
+    Lưu lịch sử FEN để kiểm tra 3-fold repetition, nếu sau này cần.
+    TEAM GAME/AI có thể dùng để kiểm soát hòa theo luật.
+    """
+
+    def __init__(self):
+        self._fen_list: list[str] = []
+
+    def push(self, fen: str) -> None:
+        self._fen_list.append(fen)
+
+    def pop(self) -> None:
+        if self._fen_list:
+            self._fen_list.pop()
+
+    def count_fen(self, fen: str) -> int:
+        return Counter(self._fen_list)[fen]
+
+File init.py
+# core/__init__.py
+from .board import Board
+
+File rules.py
+# core/rules.py
+from .board import Board
+
+
+def generate_legal_moves(board: Board) -> list[str]:
+    """
+    Trả về list nước hợp lệ dạng UCI.
+    Ở game, ta sẽ filter theo ô 'from' để highlight.
+    """
+    return board.legal_moves_uci()
+
+
+def get_game_result(board: Board) -> str:
+    """
+    Wrapper cho Board.result_status().
+    """
+    return board.result_status()
+
+
+Folder game
+File ai_hook.py
+# game/ai_hook.py
+from core.board import Board
+
+
+def choose_move_for_game(board: Board, agent_spec: dict) -> tuple[str, dict]:
+    """
+    CẦU NỐI để GAME gọi AI.
+
+    TEAM GAME:
+        - Gọi hàm này khi tới lượt AI.
+        - Truyền Board và agent_spec vào.
+
+    TEAM AI:
+        - Implement nội dung bên trong.
+        - Trả về (uci_move, telemetry_info).
+
+    Ở repo Chess_AI_Project nhưng trong khung chat GAME, ta để NotImplemented
+    để nhắc đây là việc của TEAM AI.
+    """
+    raise NotImplementedError("TEAM AI sẽ implement choose_move_for_game()")
+
+File app.py
+# game/app.py
+import pygame
+from typing import Type
+
+from .config import SCREEN_WIDTH, SCREEN_HEIGHT
+
+
+class GameApp:
+    """
+    Điều khiển vòng lặp chính Pygame, quản lý scene hiện tại.
+    """
+
+    def __init__(self, initial_scene_cls: Type["SceneBase"]):
+        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+        self.clock = pygame.time.Clock()
+        self.running = True
+
+        # Scene hiện tại
+        self.current_scene = initial_scene_cls(self)
+
+    def change_scene(self, new_scene_cls: Type["SceneBase"], *args, **kwargs):
+        """Chuyển sang scene khác."""
+        self.current_scene = new_scene_cls(self, *args, **kwargs)
+
+    def quit(self):
+        self.running = False
+
+    def run(self):
+        """Vòng lặp game chính."""
+        while self.running:
+            dt_ms = self.clock.tick(60)  # fps = 60
+            dt = dt_ms / 1000.0
+
+            events = pygame.event.get()
+            for event in events:
+                if event.type == pygame.QUIT:
+                    self.running = False
+
+            self.current_scene.handle_events(events)
+            self.current_scene.update(dt)
+            self.current_scene.render(self.screen)
+
+            pygame.display.flip()
+
+File config.py
+# game/config.py
+"""
+Cấu hình chung cho game cờ vua.
+"""
+
+# =========================
+#  CỬA SỔ / MÀN HÌNH
+# =========================
+SCREEN_WIDTH = 1280
+SCREEN_HEIGHT = 720
+WINDOW_TITLE = "Chess_AI_Project"
+
+# =========================
+#  BÀN CỜ
+# =========================
+# Số ô mỗi cạnh (cờ vua 8x8)
+BOARD_SIZE = 8
+
+# Kích thước 1 ô (pixel)
+TILE_SIZE = 80
+
+# Tổng kích thước bàn (pixel)
+BOARD_PIXEL_SIZE = TILE_SIZE * BOARD_SIZE
+
+# Vị trí góc trái trên của bàn (canh giữa)
+BOARD_LEFT = (SCREEN_WIDTH - BOARD_PIXEL_SIZE) // 2
+BOARD_TOP = (SCREEN_HEIGHT - BOARD_PIXEL_SIZE) // 2
+
+# =========================
+#  MÀU SẮC
+# =========================
+# Tên gốc (đang được board_renderer, mouse, ... import)
+COLOR_LIGHT_SQUARE = (240, 217, 181)   # ô sáng
+COLOR_DARK_SQUARE  = (181, 136,  99)   # ô tối
+
+# Ô đang được chọn (selected square)
+COLOR_SELECTED     = (246, 214,  91)   # highlight quân đang chọn
+
+# Ô nước đi hợp lệ (gợi ý move)
+COLOR_MOVE_HINT    = (246, 214, 140)   # có thể hơi khác selected 1 chút
+
+# Ô của nước đi cuối cùng (from/to)
+COLOR_LAST_MOVE    = (210, 180,  80)
+
+# Nền ngoài bàn cờ
+COLOR_BG           = ( 15,  15,  15)
+
+# Màu chữ HUD / panel
+COLOR_TEXT         = (255, 255, 255)
+
+
+# Alias tên “mới” nếu sau này ông muốn dùng cho đẹp, nhưng
+# vẫn trỏ tới mấy màu ở trên để không bị lệch.
+COLOR_LIGHT    = COLOR_LIGHT_SQUARE
+COLOR_DARK     = COLOR_DARK_SQUARE
+COLOR_HIGHLIGHT = COLOR_SELECTED
+
+
+# =========================
+#  FONT
+# =========================
+# Tỉ lệ font dựa trên chiều cao 720p
+FONT_SCALE = SCREEN_HEIGHT / 720.0
+
+
+# =========================
+#  ĐỒNG HỒ CỜ VUA
+# =========================
+# Tổng thời gian cho mỗi bên (giây)
+# Ví dụ: 5 phút = 300, 10 phút = 600, 15 phút = 900
+CHESS_TIME_LIMIT_SEC = 300
+
+File init.py
+# game/__init__.py
+
+
+Folder game/input
+File mouse.py
+# game/input/mouse.py
+from typing import Tuple
+from game.config import BOARD_LEFT, BOARD_TOP, TILE_SIZE, BOARD_SIZE
+
+
+def pixel_to_board_square(x: int, y: int) -> Tuple[int, int] | None:
+    """
+    Chuyển tọa độ pixel (x, y) sang ô cờ (file, rank) 0-based:
+    - file: 0..7 -> cột a..h
+    - rank: 0..7 -> hàng 1..8 (1 ở dưới, 8 ở trên)
+    Return None nếu click ngoài bàn.
+    """
+    bx = x - BOARD_LEFT
+    by = y - BOARD_TOP
+    if bx < 0 or by < 0:
+        return None
+
+    file_index = bx // TILE_SIZE
+    rank_from_top = by // TILE_SIZE
+
+    if file_index < 0 or file_index >= BOARD_SIZE:
+        return None
+    if rank_from_top < 0 or rank_from_top >= BOARD_SIZE:
+        return None
+
+    # rank 0 = hàng 1 (dưới), nên phải đảo trục y
+    rank_index = BOARD_SIZE - 1 - rank_from_top
+    return int(file_index), int(rank_index)
+
+
+Folder game/render
+File board_renderer.py
+# game/render/board_renderer.py
+import pygame
+from game.config import (
+    BOARD_LEFT,
+    BOARD_TOP,
+    TILE_SIZE,
+    BOARD_SIZE,
+    COLOR_LIGHT_SQUARE,
+    COLOR_DARK_SQUARE,
+    COLOR_SELECTED,
+    COLOR_HIGHLIGHT,
+    COLOR_LAST_MOVE,
+)
+
+
+def draw_board(
+    surface: pygame.Surface,
+    selected_square: tuple[int, int] | None = None,
+    highlight_squares: list[tuple[int, int]] | None = None,
+    last_move_squares: list[tuple[int, int]] | None = None,
+):
+    """
+    Vẽ bàn 8x8.
+    - selected_square: ô đang chọn
+    - highlight_squares: ô có thể đi tới
+    - last_move_squares: 2 ô from/to của nước đi cuối
+    """
+    if highlight_squares is None:
+        highlight_squares = []
+    if last_move_squares is None:
+        last_move_squares = []
+
+    for rank in range(BOARD_SIZE):
+        for file in range(BOARD_SIZE):
+            rank_from_top = BOARD_SIZE - 1 - rank
+            x = BOARD_LEFT + file * TILE_SIZE
+            y = BOARD_TOP + rank_from_top * TILE_SIZE
+
+            base_color = COLOR_LIGHT_SQUARE if (file + rank) % 2 == 0 else COLOR_DARK_SQUARE
+            rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE)
+
+            if selected_square is not None and (file, rank) == selected_square:
+                color = COLOR_SELECTED
+            elif (file, rank) in highlight_squares:
+                color = COLOR_HIGHLIGHT
+            elif (file, rank) in last_move_squares:
+                color = COLOR_LAST_MOVE
+            else:
+                color = base_color
+
+            pygame.draw.rect(surface, color, rect)
+
+File hud_renderer.py
+# game/render/hud_renderer.py
+import pygame
+from core.board import Board
+from game.config import COLOR_TEXT, SCREEN_WIDTH
+
+
+def draw_hud(
+    surface: pygame.Surface,
+    board: Board,
+    font: pygame.font.Font,
+    status_text: str,
+    game_over: bool = False,
+    game_result: str = "ongoing",
+):
+    """
+    HUD phía trên.
+
+    Hiện tại: không vẽ gì, vì toàn bộ thông tin (Turn, Status, Clock)
+    đã được chuyển sang side panels và overlay Game Over.
+
+    Hàm này vẫn giữ lại để:
+    - Không làm vỡ kiến trúc (Scene vẫn gọi draw_hud).
+    - Sau này nếu muốn thêm header chung (logo, menu nhỏ) thì dùng lại.
+    """
+    return
+
+File piece_renderer.py
+# game/render/piece_renderer.py
+import pygame
+from core.board import Board
+from game.config import (
+    BOARD_LEFT,
+    BOARD_TOP,
+    TILE_SIZE,
+    BOARD_SIZE,
+    COLOR_TEXT,
+)
+
+
+def draw_pieces(surface: pygame.Surface, board: Board, font: pygame.font.Font):
+    """
+    Vẽ quân cờ bằng text đơn giản (P, N, B, R, Q, K).
+    Sau này có thể thay bằng ảnh PNG.
+    """
+    for rank in range(BOARD_SIZE):
+        for file in range(BOARD_SIZE):
+            symbol = board.piece_symbol_at(file, rank)
+            if not symbol:
+                continue
+
+            # rank 0 ở dưới, nên phải tính lại y theo rank_from_top
+            rank_from_top = BOARD_SIZE - 1 - rank
+            x = BOARD_LEFT + file * TILE_SIZE + TILE_SIZE // 2
+            y = BOARD_TOP + rank_from_top * TILE_SIZE + TILE_SIZE // 2
+
+            text = symbol.upper()
+            color = COLOR_TEXT
+
+            text_surf = font.render(text, True, color)
+            text_rect = text_surf.get_rect(center=(x, y))
+            surface.blit(text_surf, text_rect)
+
+File side_panel_renderer.py
+# game/render/side_panel_renderer.py
+import pygame
+
+from game.config import (
+    SCREEN_WIDTH,
+    SCREEN_HEIGHT,
+    BOARD_LEFT,
+    BOARD_PIXEL_SIZE,
+    COLOR_TEXT,
+    CHESS_TIME_LIMIT_SEC,
+)
+
+
+def _format_time(sec: float) -> str:
+    """
+    Đổi số giây còn lại thành chuỗi mm:ss.
+    Nếu <= 0 thì trả về 00:00.
+    """
+    total = max(0, int(sec))
+    minutes = total // 60
+    seconds = total % 60
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+def draw_side_panels(
+    surface: pygame.Surface,
+    font: pygame.font.Font,
+    white_time_sec: float,
+    black_time_sec: float,
+    ply_count: int,
+    turn_white: bool,
+    status_text: str,
+):
+    """
+    Vẽ 2 panel:
+
+    - BÊN TRÁI (Game Info):
+        + Turn: White/Black
+        + Status: Check! / Normal / kết quả text từ status_text
+        + Move: số lượt (fullmove)
+
+    - BÊN PHẢI (Chess Clock):
+        + Đồng hồ cho White & Black
+        + Bên đang tới lượt có dấu ◀
+    """
+
+    # Kích thước panel trái/phải
+    left_width = BOARD_LEFT
+    right_x = BOARD_LEFT + BOARD_PIXEL_SIZE
+    right_width = SCREEN_WIDTH - right_x
+
+    # Nếu cả 2 bên quá nhỏ thì thôi khỏi vẽ
+    if left_width < 100 and right_width < 100:
+        return
+
+    line_h = font.get_linesize()
+    center_y = SCREEN_HEIGHT // 2
+
+    # fullmove ~ mỗi "lượt đôi": Trắng + Đen
+    fullmove = ply_count // 2 + 1 if ply_count > 0 else 1
+    base_minutes = CHESS_TIME_LIMIT_SEC // 60
+
+    # ---------- PANEL TRÁI: GAME INFO ----------
+    if left_width >= 120:
+        cx = left_width // 2
+
+        # Title
+        title_surf = font.render("Game Info", True, COLOR_TEXT)
+        title_rect = title_surf.get_rect(center=(cx, center_y - line_h * 2))
+        surface.blit(title_surf, title_rect)
+
+        # Turn
+        turn_str = "White" if turn_white else "Black"
+        turn_surf = font.render(f"Turn: {turn_str}", True, COLOR_TEXT)
+        turn_rect = turn_surf.get_rect(center=(cx, center_y - line_h))
+        surface.blit(turn_surf, turn_rect)
+
+        # Status
+        if status_text:
+            st = status_text
+        else:
+            st = "Normal"
+        status_surf = font.render(f"Status: {st}", True, COLOR_TEXT)
+        status_rect = status_surf.get_rect(center=(cx, center_y))
+        surface.blit(status_surf, status_rect)
+
+        # Move
+        move_surf = font.render(f"Move: {fullmove}", True, COLOR_TEXT)
+        move_rect = move_surf.get_rect(center=(cx, center_y + line_h))
+        surface.blit(move_surf, move_rect)
+
+    # ---------- PANEL PHẢI: CLOCK ----------
+    if right_width >= 160:
+        cx = right_x + right_width // 2
+
+        # Title clock: ví dụ Clock (5m)
+        if base_minutes > 0:
+            clock_title = f"Clock ({base_minutes}m)"
+        else:
+            clock_title = "Clock"
+
+        title_surf = font.render(clock_title, True, COLOR_TEXT)
+        title_rect = title_surf.get_rect(center=(cx, center_y - line_h * 2))
+        surface.blit(title_surf, title_rect)
+
+        # White time
+        w_tag = "◀" if turn_white else ""
+        w_time = _format_time(white_time_sec)
+        white_surf = font.render(f"White: {w_time} {w_tag}", True, COLOR_TEXT)
+        white_rect = white_surf.get_rect(center=(cx, center_y - line_h))
+        surface.blit(white_surf, white_rect)
+
+        # Black time
+        b_tag = "◀" if not turn_white else ""
+        b_time = _format_time(black_time_sec)
+        black_surf = font.render(f"Black: {b_time} {b_tag}", True, COLOR_TEXT)
+        black_rect = black_surf.get_rect(center=(cx, center_y))
+        surface.blit(black_surf, black_rect)
+
+
+Folder game/save
+File save_manager.py
+# save/save_manager.py
+import json
+from pathlib import Path
+from core.board import Board
+
+SAVE_DIR = Path("save")
+SAVE_DIR.mkdir(exist_ok=True)
+DEFAULT_SLOT = SAVE_DIR / "slot0.json"
+
+
+def save_game(board: Board, meta: dict, slot_path: Path = DEFAULT_SLOT):
+    data = {
+        "fen": board.export_fen(),
+        "meta": meta,
+    }
+    with open(slot_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def load_game(slot_path: Path = DEFAULT_SLOT) -> tuple[Board, dict] | None:
+    if not slot_path.exists():
+        return None
+
+    with open(slot_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    board = Board(data["fen"])
+    meta = data.get("meta", {})
+    return board, meta
+
+
+Folder game/scenes
+File base.py
+# game/scenes/base.py
+import pygame
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from game.app import GameApp
+
+
+class SceneBase:
+    """
+    Base class cho mọi scene: menu, game, setting,...
+    """
+
+    def __init__(self, app: "GameApp"):
+        self.app = app
+
+    def handle_events(self, events: list[pygame.event.Event]):
+        pass
+
+    def update(self, dt: float):
+        pass
+
+    def render(self, surface: pygame.Surface):
+        surface.fill((0, 0, 0))
+
+File game_local.py
+# game/scenes/game_local.py
+import pygame
+from typing import List, Tuple, Optional, Dict
+
+from .base import SceneBase
+from core.board import Board
+from core.rules import generate_legal_moves, get_game_result
+from game.config import (
+    COLOR_BG,
+    COLOR_TEXT,
+    SCREEN_WIDTH,
+    SCREEN_HEIGHT,
+    TILE_SIZE,
+    FONT_SCALE,
+    CHESS_TIME_LIMIT_SEC,
+)
+from game.input.mouse import pixel_to_board_square
+from game.render.board_renderer import draw_board
+from game.render.piece_renderer import draw_pieces
+from game.render.hud_renderer import draw_hud
+from game.render.side_panel_renderer import draw_side_panels
+from game.ui.widgets import Button
+
+
+class GameLocalScene(SceneBase):
+    """
+    Scene chơi cờ local.
+    - mode = "pvp": cả hai bên là người.
+    - mode = "pve": 1 bên người, 1 bên AI (sau này).
+    """
+
+    def __init__(self, app, mode: str = "pvp"):
+        super().__init__(app)
+        self.mode = mode
+
+        self.board = Board()  # trạng thái mới
+        self.font_piece = pygame.font.Font(None, int(40 * FONT_SCALE))
+        self.font_hud = pygame.font.Font(None, int(32 * FONT_SCALE))
+
+        # Lưu ô đang chọn (file, rank) hoặc None
+        self.selected_square: Optional[Tuple[int, int]] = None
+        # List ô được highlight (nước đi hợp lệ từ selected)
+        self.highlight_squares: List[Tuple[int, int]] = []
+        # 2 ô from/to của nước đi cuối
+        self.last_move_squares: List[Tuple[int, int]] = []
+
+        # Đếm số nước đi (ply) – mỗi lần một bên đi 1 nước
+        self.ply_count: int = 0
+
+        # Đồng hồ cờ vua: mỗi bên có CHESS_TIME_LIMIT_SEC giây, đếm ngược
+        self.white_time_sec: float = float(CHESS_TIME_LIMIT_SEC)
+        self.black_time_sec: float = float(CHESS_TIME_LIMIT_SEC)
+
+        # Lưu list nước hợp lệ (UCI)
+        self.legal_moves_uci: List[str] = generate_legal_moves(self.board)
+
+        # Trạng thái game
+        self.game_over = False
+        self.game_result: str = "ongoing"  # 'white_win' | 'black_win' | 'draw' | 'ongoing'
+        self.game_over_reason: str = ""
+        self.status_text: str = ""
+
+        # ====== PHONG CẤP ======
+        self.promotion_active: bool = False
+        self.promotion_choices: Dict[str, str] = {}  # 'Q'/'R'/'B'/'N' -> uci
+        self.promotion_buttons: List[Button] = []
+
+        # ====== GAME OVER OVERLAY ======
+        self.game_over_buttons: List[Button] = []
+        self.font_title_big = pygame.font.Font(None, int(72 * FONT_SCALE))
+        self.font_title_small = pygame.font.Font(None, int(40 * FONT_SCALE))
+        self.font_button = pygame.font.Font(None, int(36 * FONT_SCALE))
+
+    # ---------- Helpers chung ----------
+
+    @staticmethod
+    def _uci_to_from_to(uci: str) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+        """
+        Chuyển UCI 'e2e4' hoặc 'e7e8q' về ((file_from, rank_from), (file_to, rank_to)).
+        file: 0..7, rank: 0..7 (1..8).
+        """
+        file_from = ord(uci[0]) - ord("a")
+        rank_from = int(uci[1]) - 1
+        file_to = ord(uci[2]) - ord("a")
+        rank_to = int(uci[3]) - 1
+        return (file_from, rank_from), (file_to, rank_to)
+
+    def _legal_moves_from_square(self, file: int, rank: int) -> List[str]:
+        """
+        Lọc các nước hợp lệ bắt đầu từ ô (file, rank).
+        """
+        res: List[str] = []
+        for uci in self.legal_moves_uci:
+            (ff, rf), _ = self._uci_to_from_to(uci)
+            if ff == file and rf == rank:
+                res.append(uci)
+        return res
+
+    def _update_game_status(self):
+        """
+        Cập nhật biến self.game_over, self.game_result, self.status_text,...
+        sau mỗi nước đi (theo luật cờ, KHÔNG tính hết giờ).
+        """
+        if self.game_over:
+            # Nếu đã hết giờ rồi thì không override trạng thái nữa
+            return
+
+        status = get_game_result(self.board)
+        self.game_result = status
+
+        if status != "ongoing":
+            self.game_over = True
+
+            # Phân loại lý do
+            if self.board.is_checkmate():
+                self.game_over_reason = "Checkmate"
+            elif self.board.is_stalemate():
+                self.game_over_reason = "Stalemate"
+            elif self.board.is_insufficient_material():
+                self.game_over_reason = "Insufficient material"
+            else:
+                self.game_over_reason = "Draw"
+
+            if status == "white_win":
+                self.status_text = "White wins by " + self.game_over_reason.lower()
+            elif status == "black_win":
+                self.status_text = "Black wins by " + self.game_over_reason.lower()
+            else:
+                self.status_text = "Draw (" + self.game_over_reason + ")"
+
+            self._create_game_over_buttons()
+        else:
+            self.game_over_reason = ""
+            if self.board.is_check():
+                self.status_text = "Check!"
+            else:
+                self.status_text = ""
+
+    def _apply_move_and_update_state(self, uci: str) -> bool:
+        """
+        Thực hiện nước đi uci cho self.board.
+        - Cập nhật nước đi cuối để highlight.
+        - Tăng ply_count.
+        - Refresh legal moves + trạng thái thắng/thua/hòa.
+
+        Trả về True nếu thành công, False nếu bị lỗi (move không hợp lệ).
+        """
+        src, dst = self._uci_to_from_to(uci)
+
+        try:
+            self.board.apply_uci(uci)
+        except ValueError:
+            return False
+
+        # Ghi lại nước đi cuối
+        self.last_move_squares = [src, dst]
+
+        # Tăng số ply (mỗi lần có nước đi)
+        self.ply_count += 1
+
+        # Cập nhật danh sách nước hợp lệ & status
+        self.legal_moves_uci = generate_legal_moves(self.board)
+        self._update_game_status()
+
+        return True
+
+    def _on_flag_timeout(self, white_flag: bool):
+        """
+        Một bên hết giờ (flag fall).
+        white_flag = True  -> trắng hết giờ, đen thắng.
+        white_flag = False -> đen hết giờ, trắng thắng.
+        """
+        if self.game_over:
+            return
+
+        self.game_over = True
+        self.game_over_reason = "Time out"
+
+        if white_flag:
+            self.game_result = "black_win"
+            self.status_text = "Black wins on time"
+        else:
+            self.game_result = "white_win"
+            self.status_text = "White wins on time"
+
+        self._create_game_over_buttons()
+
+    # ---------- PHONG CẤP: UI & logic ----------
+
+    def _start_promotion_choice(self, promotion_moves: List[str]):
+        """
+        Gọi khi người chơi đi tới hàng phong cấp và có nhiều lựa chọn (Q/R/B/N).
+        promotion_moves: list UCI dạng 'e7e8q', 'e7e8r',...
+        """
+        self.promotion_active = True
+        self.promotion_choices.clear()
+        self.promotion_buttons.clear()
+
+        order = ["Q", "R", "B", "N"]
+        for uci in promotion_moves:
+            promo_char = uci[4].upper()  # q/r/b/n -> Q/R/B/N
+            if promo_char in order:
+                self.promotion_choices[promo_char] = uci
+
+        btn_size = int(TILE_SIZE * 0.8)
+        gap = int(TILE_SIZE * 0.2)
+        total_width = len(order) * btn_size + (len(order) - 1) * gap
+        start_x = (SCREEN_WIDTH - total_width) // 2
+        center_y = SCREEN_HEIGHT // 2 + int(TILE_SIZE * 0.5)
+
+        for i, piece_code in enumerate(order):
+            if piece_code not in self.promotion_choices:
+                continue
+            rect = pygame.Rect(0, 0, btn_size, btn_size)
+            rect.topleft = (start_x + i * (btn_size + gap), center_y)
+
+            def make_cb(code=piece_code):
+                return lambda: self._on_promotion_choice(code)
+
+            btn = Button(
+                rect=rect,
+                text=piece_code,
+                font=self.font_button,
+                callback=make_cb(),
+            )
+            self.promotion_buttons.append(btn)
+
+    def _on_promotion_choice(self, piece_code: str):
+        """
+        Người chơi chọn Q/R/B/N (bằng chuột hoặc phím).
+        """
+        uci = self.promotion_choices.get(piece_code)
+        if not uci:
+            return
+
+        success = self._apply_move_and_update_state(uci)
+        if not success:
+            return
+
+        # Reset state phong cấp
+        self.promotion_active = False
+        self.promotion_choices.clear()
+        self.promotion_buttons.clear()
+
+        # Reset chọn ô
+        self.selected_square = None
+        self.highlight_squares = []
+
+    # ---------- GAME OVER OVERLAY ----------
+
+    def _create_game_over_buttons(self):
+        """Tạo nút Play Again / Back to Menu khi game over."""
+        self.game_over_buttons.clear()
+
+        btn_w = int(TILE_SIZE * 3.0)
+        btn_h = int(TILE_SIZE * 0.8)
+        gap = int(TILE_SIZE * 0.5)
+
+        center_x = SCREEN_WIDTH // 2
+        center_y = SCREEN_HEIGHT // 2 + int(TILE_SIZE * 0.8)
+
+        # Play Again
+        rect_again = pygame.Rect(0, 0, btn_w, btn_h)
+        rect_again.center = (center_x - (btn_w // 2 + gap // 2), center_y)
+        self.game_over_buttons.append(
+            Button(rect_again, "Play Again", self.font_button, callback=self._on_play_again)
+        )
+
+        # Back to Menu
+        rect_menu = pygame.Rect(0, 0, btn_w, btn_h)
+        rect_menu.center = (center_x + (btn_w // 2 + gap // 2), center_y)
+        self.game_over_buttons.append(
+            Button(rect_menu, "Back to Menu", self.font_button, callback=self._on_back_to_menu)
+        )
+
+    def _on_play_again(self):
+        """Bắt đầu lại ván mới với cùng mode."""
+        self.app.change_scene(GameLocalScene, mode=self.mode)
+
+    def _on_back_to_menu(self):
+        from .menu_main import MainMenuScene
+        self.app.change_scene(MainMenuScene)
+
+    # ---------- Event handling ----------
+
+    def handle_events(self, events: List[pygame.event.Event]):
+        # Ưu tiên: nếu đang chọn phong cấp
+        if self.promotion_active and not self.game_over:
+            self._handle_promotion_events(events)
+            return
+
+        # Nếu game over: chỉ xử lý nút + ESC
+        if self.game_over:
+            for event in events:
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    self._on_back_to_menu()
+                for btn in self.game_over_buttons:
+                    btn.handle_event(event)
+            return
+
+        # Bình thường
+        for event in events:
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    from .menu_main import MainMenuScene
+                    self.app.change_scene(MainMenuScene)
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                self._handle_left_click(event.pos)
+
+    def _handle_promotion_events(self, events: List[pygame.event.Event]):
+        """Khi đang popup chọn phong cấp: xử lý phím và chuột."""
+        for event in events:
+            if event.type == pygame.KEYDOWN:
+                key_map = {
+                    pygame.K_q: "Q",
+                    pygame.K_r: "R",
+                    pygame.K_b: "B",
+                    pygame.K_n: "N",
+                }
+                if event.key in key_map:
+                    self._on_promotion_choice(key_map[event.key])
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                for btn in self.promotion_buttons:
+                    btn.handle_event(event)
+
+    def _handle_left_click(self, pos: Tuple[int, int]):
+        sq = pixel_to_board_square(*pos)
+        if sq is None:
+            self.selected_square = None
+            self.highlight_squares = []
+            return
+
+        file, rank = sq
+        piece_symbol = self.board.piece_symbol_at(file, rank)
+
+        if self.selected_square is None:
+            # Chưa chọn quân
+            if not piece_symbol:
+                return
+
+            is_white_piece = piece_symbol.isupper()
+            if is_white_piece != self.board.turn_white:
+                return
+
+            self.selected_square = (file, rank)
+            moves_from = self._legal_moves_from_square(file, rank)
+            dest_squares: List[Tuple[int, int]] = []
+            for uci in moves_from:
+                _, (tf, tr) = self._uci_to_from_to(uci)
+                dest_squares.append((tf, tr))
+            self.highlight_squares = dest_squares
+        else:
+            # Đã chọn quân, giờ chọn đích
+            src_file, src_rank = self.selected_square
+
+            if (file, rank) == (src_file, src_rank):
+                self.selected_square = None
+                self.highlight_squares = []
+                return
+
+            candidate_moves = self._legal_moves_from_square(src_file, src_rank)
+
+            promotion_moves: List[str] = []
+            normal_move: Optional[str] = None
+
+            for uci in candidate_moves:
+                (_, _), (tf, tr) = self._uci_to_from_to(uci)
+                if tf == file and tr == rank:
+                    if len(uci) == 5:
+                        promotion_moves.append(uci)
+                    else:
+                        normal_move = uci
+
+            if promotion_moves:
+                # Bật UI chọn phong cấp
+                self._start_promotion_choice(promotion_moves)
+                return
+
+            if normal_move is None:
+                self.selected_square = None
+                self.highlight_squares = []
+                return
+
+            success = self._apply_move_and_update_state(normal_move)
+            if not success:
+                self.selected_square = None
+                self.highlight_squares = []
+                return
+
+            self.selected_square = None
+            self.highlight_squares = []
+
+    # ---------- Update & Render ----------
+
+    def update(self, dt: float):
+        """
+        dt: số giây trôi qua giữa 2 frame (GameApp truyền vào).
+        Dùng để cập nhật đồng hồ cờ vua (đếm ngược).
+        """
+        if self.game_over or self.promotion_active:
+            return
+
+        if self.board.turn_white:
+            self.white_time_sec -= dt
+            if self.white_time_sec <= 0:
+                self.white_time_sec = 0
+                self._on_flag_timeout(white_flag=True)
+        else:
+            self.black_time_sec -= dt
+            if self.black_time_sec <= 0:
+                self.black_time_sec = 0
+                self._on_flag_timeout(white_flag=False)
+
+    def render(self, surface: pygame.Surface):
+        surface.fill(COLOR_BG)
+        draw_board(
+            surface,
+            self.selected_square,
+            self.highlight_squares,
+            self.last_move_squares,
+        )
+        draw_pieces(surface, self.board, self.font_piece)
+
+        # HUD trên cùng (hiện không vẽ gì, giữ để kiến trúc thống nhất)
+        draw_hud(
+            surface,
+            self.board,
+            self.font_hud,
+            self.status_text,
+            game_over=self.game_over,
+            game_result=self.game_result,
+        )
+
+        # Panel 2 bên: info + clock
+        draw_side_panels(
+            surface,
+            self.font_hud,
+            self.white_time_sec,
+            self.black_time_sec,
+            self.ply_count,
+            self.board.turn_white,
+            self.status_text,
+        )
+
+        if self.game_over:
+            self._render_game_over_overlay(surface)
+        elif self.promotion_active:
+            # Nếu phong cấp đang mở thì ưu tiên vẽ popup này (game chưa over)
+            self._render_promotion_popup(surface)
+
+    # ---------- Render overlay ----------
+
+    def _render_promotion_popup(self, surface: pygame.Surface):
+        overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 160))
+        surface.blit(overlay, (0, 0))
+
+        text = "Choose promotion: Q / R / B / N"
+        text_surf = self.font_hud.render(text, True, COLOR_TEXT)
+        text_rect = text_surf.get_rect(
+            center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - int(TILE_SIZE * 0.6))
+        )
+        surface.blit(text_surf, text_rect)
+
+        for btn in self.promotion_buttons:
+            btn.draw(surface)
+
+    def _render_game_over_overlay(self, surface: pygame.Surface):
+        # Lớp mờ
+        overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        surface.blit(overlay, (0, 0))
+
+        # Tiêu đề lớn
+        if self.game_result == "white_win":
+            title = "WHITE WINS!"
+        elif self.game_result == "black_win":
+            title = "BLACK WINS!"
+        elif self.game_result == "draw":
+            title = "DRAW"
+        else:
+            title = "GAME OVER"
+
+        title_surf = self.font_title_big.render(title, True, COLOR_TEXT)
+        title_rect = title_surf.get_rect(
+            center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - int(TILE_SIZE * 1.2))
+        )
+        surface.blit(title_surf, title_rect)
+
+        # Lý do (checkmate, stalemate, time out,...)
+        if self.game_over_reason:
+            reason_surf = self.font_title_small.render(self.game_over_reason, True, COLOR_TEXT)
+            reason_rect = reason_surf.get_rect(
+                center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - int(TILE_SIZE * 0.4))
+            )
+            surface.blit(reason_surf, reason_rect)
+
+        # Nút
+        for btn in self.game_over_buttons:
+            btn.draw(surface)
+
+File init.py
+# game/scenes/__init__.py
+
+File menu_main.py
+# game/scenes/menu_main.py
+import pygame
+from typing import List
+
+from .base import SceneBase
+from game.ui.widgets import Button
+from game.config import SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG, COLOR_TEXT
+from .game_local import GameLocalScene
+
+
+class MainMenuScene(SceneBase):
+    def __init__(self, app):
+        super().__init__(app)
+
+        self.font_title = pygame.font.Font(None, 64)
+        self.font_button = pygame.font.Font(None, 36)
+
+        self.buttons: List[Button] = []
+
+        btn_width = 260
+        btn_height = 50
+        center_x = SCREEN_WIDTH // 2
+        start_y = SCREEN_HEIGHT // 2 - 40
+        gap = 60
+
+        rect_play = pygame.Rect(0, 0, btn_width, btn_height)
+        rect_play.center = (center_x, start_y)
+        self.buttons.append(
+            Button(
+                rect_play,
+                "Play (Two Player)",
+                self.font_button,
+                callback=self._on_play_two_player,
+            )
+        )
+
+        rect_exit = pygame.Rect(0, 0, btn_width, btn_height)
+        rect_exit.center = (center_x, start_y + gap)
+        self.buttons.append(
+            Button(
+                rect_exit,
+                "Exit",
+                self.font_button,
+                callback=self._on_exit,
+            )
+        )
+
+    def _on_play_two_player(self):
+        self.app.change_scene(GameLocalScene, mode="pvp")
+
+    def _on_exit(self):
+        self.app.quit()
+
+    def handle_events(self, events):
+        for event in events:
+            for btn in self.buttons:
+                btn.handle_event(event)
+
+    def update(self, dt: float):
+        pass
+
+    def render(self, surface: pygame.Surface):
+        surface.fill(COLOR_BG)
+
+        title_surf = self.font_title.render("Chess_AI_Project", True, COLOR_TEXT)
+        title_rect = title_surf.get_rect(center=(SCREEN_WIDTH // 2, 120))
+        surface.blit(title_surf, title_rect)
+
+        for btn in self.buttons:
+            btn.draw(surface)
+
+
+Folder game/ui
+File widgets.py
+# game/ui/widgets.py
+import pygame
+from typing import Callable
+
+
+class Button:
+    """
+    Nút bấm cơ bản: vẽ hình chữ nhật + text, click chuột trái để gọi callback.
+    """
+
+    def __init__(
+        self,
+        rect: pygame.Rect,
+        text: str,
+        font: pygame.font.Font,
+        callback: Callable[[], None],
+        bg_color=(70, 70, 70),
+        hover_color=(100, 100, 100),
+        text_color=(255, 255, 255),
+    ):
+        self.rect = rect
+        self.text = text
+        self.font = font
+        self.callback = callback
+        self.bg_color = bg_color
+        self.hover_color = hover_color
+        self.text_color = text_color
+
+    def handle_event(self, event: pygame.event.Event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.rect.collidepoint(event.pos):
+                self.callback()
+
+    def draw(self, surface: pygame.Surface):
+        mouse_pos = pygame.mouse.get_pos()
+        is_hover = self.rect.collidepoint(mouse_pos)
+        color = self.hover_color if is_hover else self.bg_color
+
+        pygame.draw.rect(surface, color, self.rect)
+
+        text_surf = self.font.render(self.text, True, self.text_color)
+        text_rect = text_surf.get_rect(center=self.rect.center)
+        surface.blit(text_surf, text_rect)
+
+
+Folder scripts
+File init.py
+# scripts/__init__.py
+
+File run_game.py
+# scripts/run_game.py
+import pygame
+from game.app import GameApp
+from game.scenes.menu_main import MainMenuScene
+
+
+def main():
+    pygame.init()
+    pygame.display.set_caption("Chess_AI_Project")
+
+    app = GameApp(initial_scene_cls=MainMenuScene)
+    app.run()
+
+    pygame.quit()
+
+
+if __name__ == "__main__":
+    main()
+
+
