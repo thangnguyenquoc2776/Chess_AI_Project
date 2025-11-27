@@ -2,6 +2,21 @@
 ./
 ├── export_project.py
 ├── main.py
+├── ai
+│   ├── agent_base.py
+│   ├── api.py
+│   ├── init.py
+│   ├── random_agent.py
+│   ├── minimax
+│   │   ├── __init__.py
+│   │   ├── eval.py
+│   │   ├── minimax_agent.py
+│   │   └── search.py
+│   └── ml
+│       ├── __init__.py
+│       ├── agent.py
+│       ├── model.py
+│       └── utils.py
 ├── core
 │   ├── board.py
 │   ├── history.py
@@ -12,6 +27,8 @@
 │   ├── app.py
 │   ├── config.py
 │   ├── init.py
+│   ├── network_client.py
+│   ├── test_client.py
 │   ├── input
 │   │   └── mouse.py
 │   ├── render
@@ -22,40 +39,73 @@
 │   ├── save
 │   │   └── save_manager.py
 │   ├── scenes
+│   │   ├── ai_selection.py
 │   │   ├── base.py
+│   │   ├── credits.py
 │   │   ├── game_local.py
+│   │   ├── game_online.py
+│   │   ├── game_vs_ai.py
 │   │   ├── init.py
-│   │   └── menu_main.py
+│   │   ├── menu_main.py
+│   │   ├── menu_play.py
+│   │   ├── online_menu.py
+│   │   ├── settings.py
+│   │   └── simulator.py
 │   └── ui
 │       └── widgets.py
-└── scripts
-    ├── init.py
-    └── run_game.py
+├── scripts
+│   ├── init.py
+│   └── run_game.py
+└── server
+    └── main.py
 
 ===== FILE MANIFEST =====
 - export_project.py — 24009 bytes — ok
 - main.py — 104 bytes — ok
+- ai/agent_base.py — 701 bytes — ok
+- ai/api.py — 7937 bytes — ok
+- ai/init.py — 767 bytes — ok
+- ai/random_agent.py — 1306 bytes — ok
+- ai/minimax/__init__.py — 0 bytes — ok
+- ai/minimax/eval.py — 4679 bytes — ok
+- ai/minimax/minimax_agent.py — 3291 bytes — ok
+- ai/minimax/search.py — 3115 bytes — ok
+- ai/ml/__init__.py — 200 bytes — ok
+- ai/ml/agent.py — 2450 bytes — ok
+- ai/ml/model.py — 2389 bytes — ok
+- ai/ml/utils.py — 2117 bytes — ok
 - core/board.py — 3718 bytes — ok
 - core/history.py — 574 bytes — ok
 - core/init.py — 46 bytes — ok
 - core/rules.py — 408 bytes — ok
-- game/ai_hook.py — 629 bytes — ok
+- game/ai_hook.py — 4481 bytes — ok
 - game/app.py — 1298 bytes — ok
-- game/config.py — 1993 bytes — ok
+- game/config.py — 2355 bytes — ok
 - game/init.py — 20 bytes — ok
+- game/network_client.py — 3399 bytes — ok
+- game/test_client.py — 425 bytes — ok
 - game/input/mouse.py — 902 bytes — ok
-- game/render/board_renderer.py — 1620 bytes — ok
+- game/render/board_renderer.py — 4532 bytes — ok
 - game/render/hud_renderer.py — 715 bytes — ok
-- game/render/piece_renderer.py — 1096 bytes — ok
-- game/render/side_panel_renderer.py — 3766 bytes — ok
+- game/render/piece_renderer.py — 3137 bytes — ok
+- game/render/side_panel_renderer.py — 4445 bytes — ok
 - game/save/save_manager.py — 773 bytes — ok
+- game/scenes/ai_selection.py — 2650 bytes — ok
 - game/scenes/base.py — 504 bytes — ok
-- game/scenes/game_local.py — 18225 bytes — ok
+- game/scenes/credits.py — 2345 bytes — ok
+- game/scenes/game_local.py — 20076 bytes — ok
+- game/scenes/game_online.py — 18048 bytes — ok
+- game/scenes/game_vs_ai.py — 6494 bytes — ok
 - game/scenes/init.py — 27 bytes — ok
-- game/scenes/menu_main.py — 2022 bytes — ok
+- game/scenes/menu_main.py — 4046 bytes — ok
+- game/scenes/menu_play.py — 3354 bytes — ok
+- game/scenes/online_menu.py — 9427 bytes — ok
+- game/scenes/settings.py — 2264 bytes — ok
+- game/scenes/simulator.py — 3011 bytes — ok
 - game/ui/widgets.py — 1362 bytes — ok
 - scripts/init.py — 23 bytes — ok
-- scripts/run_game.py — 339 bytes — ok
+- scripts/run_game.py — 371 bytes — ok
+- server/main.py — 14063 bytes — ok
 
 
 
@@ -688,6 +738,860 @@ if __name__ == "__main__":
     run_game()
 
 
+Folder ai
+File agent_base.py
+# ai/agent_base.py
+from __future__ import annotations
+from typing import Protocol, Tuple, Dict, Any
+import chess
+
+
+class Agent(Protocol):
+    """
+    Interface chung cho mọi agent:
+    - RandomAgent
+    - MinimaxAgent
+    - MLAgent
+    """
+
+    name: str
+
+    def choose_move(self, board: chess.Board) -> Tuple[chess.Move, Dict[str, Any]]:
+        """
+        Input:
+            board: đối tượng chess.Board (python-chess) ở trạng thái hiện tại.
+
+        Output:
+            (move, info)
+            - move: chess.Move hợp lệ mà agent chọn.
+            - info: dict chứa thông tin thêm (depth, nodes, time_ms, score, ...)
+        """
+        ...
+
+File api.py
+from typing import Dict, Any, Tuple, Optional
+import chess
+import traceback
+
+# Import các Agent
+# Lưu ý: Giả sử bạn đã có file random_agent.py, nếu không có thì API sẽ dùng fallback
+try:
+    from .random_agent import RandomAgent
+except ImportError:
+    class RandomAgent:
+        def __init__(self, seed=None): pass
+        def choose_move(self, board): 
+            import random
+            move = random.choice(list(board.legal_moves)) if list(board.legal_moves) else None
+            return move, {"info": "fallback_random"}
+
+from .minimax.minimax_agent import (
+    MinimaxAgent,
+    # Import các factory functions nếu có trong file minimax_agent.py
+    # Nếu không có thì logic _create_agent bên dưới sẽ tự xử lý
+)
+
+
+# ============================================================
+# 1. FACTORY TẠO AGENT
+# ============================================================
+
+def _create_agent(agent_spec: Dict[str, Any]):
+    """
+    Tạo đối tượng Agent dựa trên dictionary cấu hình.
+    Hỗ trợ Debug Script Opening thông qua các Level cao.
+    """
+    agent_type = agent_spec.get("type", "random")
+    level = agent_spec.get("level", "medium")
+    
+    # --- RANDOM AGENT ---
+    if agent_type == "random":
+        seed = agent_spec.get("seed")
+        return RandomAgent(seed=seed)
+    
+    # --- MINIMAX AGENT ---
+    if agent_type == "minimax":
+        
+        # Xác định cấu hình dựa trên 'level' hoặc 'depth' tùy chỉnh
+        depth = 3
+        use_advanced = True
+        use_quiescence = True
+        use_ordering = True
+
+        # Cấu hình sẵn theo Level
+        if level == "easy":
+            depth = 2
+            use_advanced = False  # Không dùng script ở level này
+        elif level == "medium":
+            depth = 3
+            use_advanced = True   # Bắt đầu dùng Eval Advanced (Script có thể active)
+        elif level == "hard":
+            depth = 4
+            use_advanced = True
+        elif level == "expert":
+            depth = 5
+            use_advanced = True
+        elif level == "master":
+            depth = 6
+            use_advanced = True
+
+        # Override nếu có tham số cụ thể trong agent_spec
+        if "depth" in agent_spec:
+            depth = agent_spec["depth"]
+            # Nếu set depth thấp (1-2) thì mặc định tắt advanced trừ khi force bật
+            if depth <= 2 and "use_advanced_eval" not in agent_spec:
+                use_advanced = False
+
+        if "use_advanced_eval" in agent_spec:
+            use_advanced = agent_spec["use_advanced_eval"]
+
+        # Nếu user đang debug script, tốt nhất nên dùng depth=4 hoặc 5 và advanced=True
+        # Time limit logic (nếu có class TimeLimited, ở đây dùng Minimax thường làm nền)
+        # time_limit = agent_spec.get("time_limit_ms") 
+        
+        # Tạo Agent
+        # Lưu ý: constructor phải khớp với định nghĩa __init__ trong minimax_agent.py
+        return MinimaxAgent(
+            depth=depth,
+            use_advanced_eval=use_advanced,
+            use_quiescence=use_quiescence,
+            use_move_ordering=use_ordering
+        )
+    if agent_type == "transformer":
+        from .ml.agent import TransformerAgent   
+        
+        model_path = agent_spec.get("model_path", "models/transformer_chess.pth")
+        vocab_path = agent_spec.get("vocab_path", "models/vocab.pkl")
+        
+        return TransformerAgent(model_path=model_path, vocab_path=vocab_path)
+            
+    # Fallback
+    print(f"[API] Warning: Unknown type '{agent_type}', defaulting to Random.")
+    return RandomAgent()
+
+
+# ============================================================
+# 2. MAIN API FUNCTION
+# ============================================================
+
+def choose_move_from_fen(fen: str, agent_spec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Hàm chính được gọi bởi Game/Server.
+    
+    Flow: FEN String -> Board Object -> AI Calculate -> Result Dictionary
+    """
+    try:
+        # 1. Tạo bàn cờ từ FEN
+        board = chess.Board(fen)
+        
+        # 2. Kiểm tra game over ngay lập tức
+        if board.is_game_over():
+            return {
+                "uci": None,
+                "info": {"error": "Game is over", "result": board.result()}
+            }
+
+        # 3. Khởi tạo AI Agent
+        agent = _create_agent(agent_spec)
+        
+        # 4. AI Tính toán (Phần debug in console sẽ chạy ở đây)
+        move, info = agent.choose_move(board)
+        
+        # 5. Xử lý kết quả
+        if move is None or move == chess.Move.null():
+             # Trường hợp AI chịu thua hoặc lỗi
+            return {
+                "uci": None,
+                "info": {"error": "AI returned no move (Null)", **info}
+            }
+
+        if move not in board.legal_moves:
+             # Trường hợp Bot "phát minh" ra nước đi sai luật (hiếm gặp nếu dùng thư viện chess)
+            return {
+                "uci": None,
+                "info": {
+                    "error": f"Illegal move generated: {move.uci()}",
+                    "valid_moves": [m.uci() for m in board.legal_moves]
+                }
+            }
+
+        # 6. Trả về đúng format
+        return {
+            "uci": move.uci(),
+            "info": info  # Chứa score, nodes, time, depth...
+        }
+
+    except ValueError as e:
+        return {"uci": None, "info": {"error": f"Invalid FEN: {e}"}}
+    except Exception as e:
+        traceback.print_exc() # In lỗi ra console để debug
+        return {"uci": None, "info": {"error": f"Internal Error: {str(e)}"}}
+
+
+# ============================================================
+# 3. TIỆN ÍCH HỖ TRỢ UI
+# ============================================================
+
+def get_available_agents() -> Dict[str, Any]:
+    return {
+        "transformer": {
+            "name": "Neural Net (Transformer)",
+            "description": "AI học sâu",
+            "config": {"type": "transformer"},
+            "recommended": True,
+        },
+
+        # === CLASSIC MINIMAX BOTS ===
+        "minimax_medium": {
+            "name": "Bot Normal (Minimax)",
+            "description": "Độ khó trung bình, dùng thuật toán Minimax truyền thống.",
+            "config": {"type": "minimax", "level": "medium"},
+        },
+        "minimax_hard": {
+            "name": "Bot Hard (Minimax)",
+            "description": "Tính sâu hơn, khó thắng hơn.",
+            "config": {"type": "minimax", "level": "hard"},
+        },
+        "minimax_master": {
+            "name": "Bot Master (Minimax)",
+            "description": "Rất mạnh – Minimax depth 6.",
+            "config": {"type": "minimax", "level": "master"},
+        },
+
+        # Optional: Debug bot (giữ lại nếu bạn cần test script)
+        "minimax_debug": {
+            "name": "Debug Bot (Script Test)",
+            "description": "Dùng để test opening script.",
+            "config": {"type": "minimax", "level": "hard", "use_advanced_eval": True},
+            "warning": "Check Console"
+        },
+    }
+
+def create_ai_for_difficulty(difficulty: str) -> Dict[str, Any]:
+    """Mapping đơn giản từ string -> config"""
+    mapping = {
+        "easy": {"type": "minimax", "level": "easy"},
+        "medium": {"type": "minimax", "level": "medium"},
+        "hard": {"type": "minimax", "level": "hard"},
+        "transformer": {"type": "transformer"},
+        "neural": {"type": "transformer"},
+        "debug": {"type": "minimax", "level": "hard", "use_advanced_eval": True}
+        
+    }
+    return mapping.get(difficulty, mapping["medium"])
+
+File init.py
+# ai/__init__.py
+"""
+Module AI cho Chess Game.
+
+Cung cấp API thống nhất để Game gọi sang AI:
+- choose_move_from_fen(): Hàm chính để lấy nước đi
+
+Các loại AI:
+- RandomAgent: Đi ngẫu nhiên
+- MinimaxAgent: Dùng Minimax + Alpha-Beta pruning
+- MLAgent: Dùng Machine Learning (TODO)
+
+Usage:
+    from ai import choose_move_from_fen
+    
+    result = choose_move_from_fen(
+        fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        agent_spec={"type": "minimax", "level": "medium"}
+    )
+    
+    print(result["uci"])   # "e2e4"
+    print(result["info"])  # {"agent": "minimax", "depth": 3, ...}
+"""
+
+from .api import choose_move_from_fen
+
+__all__ = ['choose_move_from_fen']
+__version__ = '1.0.0'
+
+File random_agent.py
+# ai/random_agent.py
+"""
+Random Agent - chọn nước đi ngẫu nhiên.
+FIX: Dùng random.random() thay vì Random(seed) để tránh lặp lại kết quả
+"""
+
+import random
+import time
+from typing import Tuple, Dict, Any
+import chess
+
+from .agent_base import Agent
+
+
+class RandomAgent(Agent):
+    def __init__(self, seed: int | None = None):
+        self.name = "random"
+        
+        if seed is None:
+            self._rng = None  
+            self._seed = None
+        else:
+            self._rng = random.Random(seed)
+            self._seed = seed
+
+    def choose_move(self, board: chess.Board) -> Tuple[chess.Move, Dict[str, Any]]:
+        legal_moves = list(board.legal_moves)
+        if not legal_moves:
+            raise ValueError("No legal moves (game must be over)")
+
+        # FIX: Dùng random toàn cục nếu không có seed
+        if self._rng is None:
+            move = random.choice(legal_moves)
+        else:
+            move = self._rng.choice(legal_moves)
+        
+        info: Dict[str, Any] = {
+            "agent": self.name,
+            "chosen": move.uci(),
+            "note": "random move",
+        }
+        
+        if self._seed is not None:
+            info["seed"] = self._seed
+            
+        return move, info
+
+
+Folder ai/minimax
+File __init__.py
+
+
+File eval.py
+import chess
+
+# ============================================================
+# CONFIG CỨNG
+# ============================================================
+SCRIPT_BONUS = 1_000_000   # Điểm thưởng cưỡng bức
+MAX_SCRIPT_PLY = 20        # QUAN TRỌNG: Tăng lên 20 để Search Depth không bị mất dấu script
+
+# Giá trị quân cờ cơ bản (Fallback)
+PIECE_VALUES = {
+    chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330, 
+    chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 20000
+}
+
+def evaluate(board: chess.Board) -> int:
+    """Normal eval wrapper"""
+    return _evaluate_normal_logic(board)
+
+def evaluate_advanced(board: chess.Board) -> int:
+    """
+    Evaluation thông minh có Scripted Opening.
+    
+    SỬA LỖI QUAN TRỌNG: 
+    Bot không được quên mục tiêu Script khi đào sâu suy nghĩ (Minimax Depth).
+    Do đó ta kiểm tra điều kiện script một cách rộng hơn (Ply <= 20).
+    """
+    
+    # Chỉ chạy script trong giai đoạn khai cuộc (Fullmove < 8)
+    # Ply kiểm tra rộng ra để cover leaf-nodes của thuật toán tìm kiếm
+    if board.fullmove_number <= 8:
+        script_score = _evaluate_scripted_targets(board)
+        
+        # Nếu đạt được ít nhất một mục tiêu trong script, dùng điểm script này
+        if abs(script_score) >= SCRIPT_BONUS:
+            # Cộng thêm một chút eval thường để bot phân biệt các biến thể cùng điểm script
+            return script_score + (_evaluate_normal_logic(board) // 100)
+
+    # Hết script thì đánh giá bình thường
+    return _evaluate_normal_logic(board)
+
+
+def _evaluate_scripted_targets(board: chess.Board) -> int:
+    score = 0
+    
+    # --- TRẮNG (WHITE) ---
+    
+    # 1. Pawn g3
+    if board.piece_at(chess.G3) == chess.Piece(chess.PAWN, chess.WHITE):
+        score += SCRIPT_BONUS
+
+    # 2. Knight f3
+    if board.piece_at(chess.F3) == chess.Piece(chess.KNIGHT, chess.WHITE):
+        score += SCRIPT_BONUS
+        
+    # 3. Bishop g2
+    if board.piece_at(chess.G2) == chess.Piece(chess.BISHOP, chess.WHITE):
+        score += SCRIPT_BONUS
+
+    # 4. CASTLE WHITE (King g1 + Rook f1)
+    # SỬA LỖI: Kiểm tra thêm Xe ở f1 để đảm bảo là Castle chứ không phải King đi bộ
+    w_king_ok = (board.piece_at(chess.G1) == chess.Piece(chess.KING, chess.WHITE))
+    w_rook_ok = (board.piece_at(chess.F1) == chess.Piece(chess.ROOK, chess.WHITE))
+    
+    if w_king_ok and w_rook_ok:
+        # Điểm rất cao để ép buộc động tác này
+        score += SCRIPT_BONUS * 2
+    elif (w_king_ok and not w_rook_ok) or bool(board.castling_rights & chess.BB_H1):
+        # PHẠT NẶNG: Nếu Vua ở g1 mà Xe không ở f1 (tức là đi bộ), trừ điểm
+        # để bot thấy đi bộ là ngu ngốc so với nhập thành
+        score -= SCRIPT_BONUS
+
+
+    # --- ĐEN (BLACK) ---
+    
+    # 1. Pawn b6
+    if board.piece_at(chess.B6) == chess.Piece(chess.PAWN, chess.BLACK):
+        score -= SCRIPT_BONUS
+
+    # 2. Knight c6
+    if board.piece_at(chess.C6) == chess.Piece(chess.KNIGHT, chess.BLACK):
+        score -= SCRIPT_BONUS
+
+    # 3. Bishop b7
+    if board.piece_at(chess.B7) == chess.Piece(chess.BISHOP, chess.BLACK):
+        score -= SCRIPT_BONUS
+
+    # 4. CASTLE BLACK (Kingside: King g8 + Rook f8)
+    b_king_ok = (board.piece_at(chess.G8) == chess.Piece(chess.KING, chess.BLACK))
+    b_rook_ok = (board.piece_at(chess.F8) == chess.Piece(chess.ROOK, chess.BLACK))
+    
+    if b_king_ok and b_rook_ok:
+        score -= SCRIPT_BONUS * 2
+    elif b_king_ok and not b_rook_ok or bool(board.castling_rights & chess.BB_A1):
+        # Phạt nếu đen đi bộ vua
+        score += SCRIPT_BONUS
+
+    return score
+
+def _evaluate_normal_logic(board: chess.Board) -> int:
+    """Logic đánh giá cờ bình thường (khi hết script)"""
+    if board.is_checkmate():
+        if board.turn: return -9999999 # Turn = True (White) bị checkmate -> Black win -> Negative big
+        else: return 9999999
+        
+    score = 0
+    
+    # Material
+    score += _eval_material(board)
+    
+    # Vị trí quân cơ bản (Mobility / Control Center)
+    score += board.legal_moves.count() * 5 if board.turn == chess.WHITE else -board.legal_moves.count() * 5
+    
+    return score
+
+def _eval_material(board: chess.Board) -> int:
+    s = 0
+    for pt, val in PIECE_VALUES.items():
+        if pt == chess.KING: continue
+        s += len(board.pieces(pt, chess.WHITE)) * val
+        s -= len(board.pieces(pt, chess.BLACK)) * val
+    return s
+
+File minimax_agent.py
+from __future__ import annotations
+from typing import Tuple, Dict, Any
+import time
+import chess
+
+from ai.agent_base import Agent
+from .search import negamax_search
+from .eval import evaluate, evaluate_advanced
+
+class MinimaxAgent(Agent):
+    def __init__(
+        self,
+        depth: int = 3,
+        use_advanced_eval: bool = True,
+        use_quiescence: bool = True,
+        use_move_ordering: bool = True,
+    ):
+        self.name = f"minimax_d{depth}"
+        self.depth = depth
+        self.use_advanced_eval = use_advanced_eval
+        self.use_quiescence = use_quiescence
+        self.use_move_ordering = use_move_ordering
+
+    def choose_move(self, board: chess.Board) -> Tuple[chess.Move, Dict[str, Any]]:
+        start = time.time()
+
+        # Sử dụng hàm evaluate_advanced chứa script mở màn
+        eval_fn = evaluate_advanced if self.use_advanced_eval else evaluate
+
+        # Debug: Báo hiện tại đang ở nước thứ mấy (Fullmove)
+        print(f"--- Turn: {board.turn} (White=True/Black=False) | Move Number: {board.fullmove_number} | Ply: {board.ply()} ---")
+
+        best_move, best_score, nodes = negamax_search(
+            board=board,
+            depth=self.depth,
+            eval_fn=eval_fn,
+            use_quiescence=self.use_quiescence,
+            use_move_ordering=self.use_move_ordering
+        )
+
+        # Tự động phong hậu nếu tốt đi đến cuối
+        if best_move and best_move != chess.Move.null():
+            if board.is_capture(best_move) or board.piece_at(best_move.from_square).piece_type == chess.PAWN:
+                # Logic check phong cap co ban
+                pass
+            
+            # Gán promotion=Queen nếu chưa có (đề phòng engine quên)
+            move_uci = best_move.uci()
+            piece = board.piece_at(best_move.from_square)
+            if piece and piece.piece_type == chess.PAWN:
+                rank = chess.square_rank(best_move.to_square)
+                if (board.turn == chess.WHITE and rank == 7) or \
+                   (board.turn == chess.BLACK and rank == 0):
+                     if best_move.promotion is None:
+                        best_move.promotion = chess.QUEEN
+
+        elapsed_ms = int((time.time() - start) * 1000)
+        
+        # Debug output
+        print(f"[AGENT] Picked Move: {best_move} | Score: {best_score} | Nodes: {nodes} | Time: {elapsed_ms}ms")
+
+        info: Dict[str, Any] = {
+            "agent": "minimax_scripted",
+            "depth": self.depth,
+            "score": best_score,
+            "nodes": nodes,
+            "time_ms": elapsed_ms
+        }
+        return best_move, info
+
+# Factory functions giữ nguyên hoặc tối giản để test
+def create_hard_agent() -> MinimaxAgent:
+    return MinimaxAgent(depth=2, use_advanced_eval=True)
+
+def create_easy_agent() -> MinimaxAgent:
+    return MinimaxAgent(depth=2, use_advanced_eval=True)
+
+def create_medium_agent() -> MinimaxAgent:
+    return MinimaxAgent(depth=2, use_advanced_eval=True)
+
+def create_expert_agent() -> MinimaxAgent:
+    return MinimaxAgent(depth=4, use_advanced_eval=True)
+
+def create_master_agent() -> MinimaxAgent:
+    return MinimaxAgent(depth=4, use_advanced_eval=True)
+
+File search.py
+from __future__ import annotations
+from typing import Callable, Tuple, List
+import chess
+import random
+
+EvalFn = Callable[[chess.Board], int]
+INFINITY = 10**9
+
+def negamax_search(
+    board: chess.Board,
+    depth: int,
+    eval_fn: EvalFn,
+    use_quiescence: bool = True,
+    use_move_ordering: bool = True,
+) -> Tuple[chess.Move, int, int]:
+    """
+    Root search function.
+    """
+    alpha = -INFINITY
+    beta = INFINITY
+    best_move = chess.Move.null()
+    best_val = -INFINITY
+    nodes_searched = 0
+    
+    # Lấy tất cả các nước đi hợp lệ
+    moves = list(board.legal_moves)
+    if not moves:
+        return chess.Move.null(), eval_fn(board), 1
+
+    # Move ordering (đơn giản để không làm rối script)
+    if use_move_ordering:
+        # Prioritize captures, promotion, checks
+        moves.sort(key=lambda m: _move_score_guess(board, m), reverse=True)
+
+    for move in moves:
+        board.push(move)
+        
+        # Đệ quy
+        score, sub_nodes = _negamax_worker(
+            board, depth - 1, -beta, -alpha, -1 if board.turn == chess.BLACK else 1, eval_fn
+        )
+        
+        # Đảo dấu score vì Negamax
+        score = -score
+        nodes_searched += sub_nodes
+        board.pop()
+
+        if score > best_val:
+            best_val = score
+            best_move = move
+        
+        alpha = max(alpha, score)
+        if alpha >= beta:
+            break
+            
+    return best_move, best_val, nodes_searched
+
+def _negamax_worker(
+    board: chess.Board, depth: int, alpha: int, beta: int, color: int, eval_fn: EvalFn
+) -> Tuple[int, int]:
+    
+    # Node đếm
+    nodes = 1
+
+    # Kiểm tra hết ván cờ
+    if board.is_game_over():
+        # Dùng eval thông thường cho game over
+        return eval_fn(board) * color, nodes
+
+    # Hết depth
+    if depth == 0:
+        # Trả về điểm số (scripted bonus nằm trong eval_fn)
+        return eval_fn(board) * color, nodes
+
+    best_score = -INFINITY
+    moves = list(board.legal_moves)
+    
+    # Simple sorting
+    moves.sort(key=lambda m: _move_score_guess(board, m), reverse=True)
+
+    found_pv = False
+    for move in moves:
+        board.push(move)
+        
+        score, sub_nodes = _negamax_worker(board, depth - 1, -beta, -alpha, -color, eval_fn)
+        score = -score
+        nodes += sub_nodes
+        
+        board.pop()
+
+        best_score = max(best_score, score)
+        alpha = max(alpha, score)
+        
+        if alpha >= beta:
+            break
+            
+    return best_score, nodes
+
+def _move_score_guess(board: chess.Board, move: chess.Move) -> int:
+    """Heuristic đơn giản để sắp xếp nước đi"""
+    if board.is_capture(move):
+        return 10000 \
+            + (100 if board.piece_at(move.to_square) else 0) \
+            - (board.piece_at(move.from_square).piece_type if board.piece_at(move.from_square) else 0)
+    if board.gives_check(move):
+        return 9000
+    if move.promotion:
+        return 8000
+    return 0
+
+
+Folder ai/ml
+File __init__.py
+from .model import ChessTransformer
+from .agent import TransformerAgent
+from .utils import ChessVocabulary
+
+__all__ = [
+    "ChessTransformer",
+    "TransformerAgent", 
+    "ChessVocabulary"
+]
+
+File agent.py
+import chess
+import torch
+import random
+import os
+from ai.agent_base import Agent
+from .model import ChessTransformer
+from .utils import ChessVocabulary
+
+class TransformerAgent(Agent):
+    name = "TransformerAI"
+
+    def __init__(self, model_path="models/transformer_chess.pth", vocab_path="models/vocab.pkl"):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.is_ready = False
+        
+        if os.path.exists(model_path) and os.path.exists(vocab_path):
+            try:
+                self.vocab = ChessVocabulary.load(vocab_path)
+                self.model = ChessTransformer(vocab_size=self.vocab.vocab_size)
+                self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+                self.model.to(self.device)
+                self.model.eval() 
+                self.is_ready = True
+                print("TransformerAgent: Đã load model thành công!")
+            except Exception as e:
+                print(f"TransformerAgent Error: {e}")
+        else:
+            print("TransformerAgent: Chưa tìm thấy file model. Sẽ đánh ngẫu nhiên.")
+
+    def choose_move(self, board: chess.Board):
+        legal_moves = list(board.legal_moves)
+        if not legal_moves:
+            return None, {} 
+
+        if not self.is_ready:
+            return random.choice(legal_moves), {"type": "random_fallback"}
+
+        history = [m.uci() for m in board.move_stack]
+        
+        input_tensor, padding_mask = self.vocab.moves_to_tensor(history, self.device)
+        
+        with torch.no_grad():
+            logits = self.model(input_tensor, src_key_padding_mask=padding_mask)
+            probs = torch.softmax(logits, dim=1).squeeze(0) 
+
+        sorted_indices = torch.argsort(probs, descending=True)
+        
+        best_move = None
+        
+        for idx in sorted_indices:
+            move_uci = self.vocab.decode(idx.item())
+            
+            try:
+                move_obj = chess.Move.from_uci(move_uci)
+                if move_obj in legal_moves:
+                    best_move = move_obj
+                    break # Tìm thấy rồi!
+            except:
+                continue
+        
+        if best_move is None:
+            best_move = random.choice(legal_moves)
+
+        return best_move, {"type": "transformer", "prob": probs[self.vocab.encode(best_move.uci())].item()}
+
+File model.py
+# ai/ml/model.py
+import torch
+import torch.nn as nn
+import math
+
+def get_sinusoidal_positional_encoding(max_seq_len: int, d_model: int, device=None):
+    pe = torch.zeros(max_seq_len, d_model, device=device)
+    position = torch.arange(0, max_seq_len, dtype=torch.float).unsqueeze(1)
+    div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+    pe[:, 0::2] = torch.sin(position * div_term)
+    pe[:, 1::2] = torch.cos(position * div_term)
+    return pe.unsqueeze(0)  # (1, seq_len, d_model)
+
+class ChessTransformer(nn.Module):
+    def __init__(self, vocab_size, d_model=256, nhead=8, num_layers=6, max_seq_len=80, dropout=0.1):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.d_model = d_model
+        self.max_seq_len = max_seq_len
+        
+        # Sinusoidal PE (fixed, no learning needed)
+        self.register_buffer(
+            'pos_encoding', 
+            get_sinusoidal_positional_encoding(max_seq_len, d_model)
+        )
+        
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, 
+            nhead=nhead, 
+            dim_feedforward=1024, 
+            dropout=dropout, 
+            batch_first=True,
+            activation='gelu'  # small bonus
+        )
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        
+        self.dropout = nn.Dropout(dropout)
+        self.fc_out = nn.Linear(d_model, vocab_size)
+        
+        # Weight initialization (helps a lot)
+        self._init_weights()
+
+    def _init_weights(self):
+        initrange = 0.1
+        self.embedding.weight.data.uniform_(-initrange, initrange)
+        self.fc_out.bias.data.zero_()
+        self.fc_out.weight.data.uniform_(-initrange, initrange)
+
+    def forward(self, x, src_key_padding_mask=None):
+        seq_len = x.size(1)
+        
+        x = self.embedding(x) * math.sqrt(self.d_model)
+        
+        # Add positional encoding (automatically broadcasts)
+        x = x + self.pos_encoding[:, :seq_len, :]
+        
+        x = self.dropout(x)
+        
+        x = self.transformer_encoder(x, src_key_padding_mask=src_key_padding_mask)
+        
+        # Predict next move from the LAST token
+        x = x[:, -1, :] 
+        
+        x = self.fc_out(x)
+        return x
+
+File utils.py
+# ai/ml/utils.py
+import joblib
+import torch
+from typing import List, Dict, Optional, Tuple
+
+class ChessVocabulary:
+    """Quản lý việc ánh xạ nước đi UCI (str) <-> Index (int)."""
+    def __init__(self, moves: Optional[List[str]] = None, max_len: int = 80):
+        self.max_len = max_len 
+        
+        self.PAD_TOKEN = '<pad>' 
+        self.SOS_TOKEN = '<sos>' 
+        self.UNK_TOKEN = '<unk>' 
+        
+        self.stoi: Dict[str, int] = {
+            self.PAD_TOKEN: 0,
+            self.SOS_TOKEN: 1,
+            self.UNK_TOKEN: 2,
+        }
+        self.itos: Dict[int, str] = {v: k for k, v in self.stoi.items()}
+        
+        if moves:
+            for i, move in enumerate(moves):
+                idx = i + 3 
+                self.stoi[move] = idx
+                self.itos[idx] = move
+        
+        self.vocab_size = len(self.stoi)
+
+    @classmethod
+    def load(cls, path: str):
+        return joblib.load(path)
+
+    def save(self, path: str):
+        joblib.dump(self, path)
+        
+    def encode(self, uci_move: str) -> int:
+        return self.stoi.get(uci_move, self.stoi[self.UNK_TOKEN])
+
+    def decode(self, index: int) -> str:
+        return self.itos.get(index, self.UNK_TOKEN)
+
+    def moves_to_tensor(self, move_history: List[str], device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
+        # CRITICAL FIX: Always start with <sos>
+        sequence = [self.SOS_TOKEN] + move_history[-self.max_len + 1:]  # +1 because we added SOS
+        
+        encoded = [self.encode(move) for move in sequence]
+        
+        # Left-pad to max_len
+        padding_needed = self.max_len - len(encoded)
+        if padding_needed > 0:
+            padded_encoded = [self.stoi[self.PAD_TOKEN]] * padding_needed + encoded
+        else:
+            padded_encoded = encoded[-self.max_len:]  # truncate old games if any
+
+        input_tensor = torch.tensor([padded_encoded], dtype=torch.long, device=device)
+        padding_mask = (input_tensor == self.stoi[self.PAD_TOKEN])
+        
+        return input_tensor, padding_mask
+
+
 Folder core
 File board.py
 # core/board.py
@@ -854,25 +1758,129 @@ def get_game_result(board: Board) -> str:
 Folder game
 File ai_hook.py
 # game/ai_hook.py
-from core.board import Board
+"""
+CẦU NỐI giữa GAME ENGINE và AI MODULE.
 
+File này giúp Game Engine (dùng Board Object) nói chuyện được với 
+AI Module (dùng FEN string).
+"""
 
-def choose_move_for_game(board: Board, agent_spec: dict) -> tuple[str, dict]:
+from __future__ import annotations
+from typing import Tuple, Dict, Any, Optional
+
+# Giả định class Board của game nằm ở core.board
+# Nếu sai đường dẫn, bạn cần chỉnh lại import này
+try:
+    from core.board import Board
+except ImportError:
+    # Fallback class để tránh crash nếu chưa có core
+    class Board:
+        def export_fen(self): return "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+
+from ai.api import (
+    choose_move_from_fen, 
+    get_available_agents,
+    create_ai_for_difficulty
+)
+
+# =============================================================================
+# MAIN FUNCTION
+# =============================================================================
+
+def choose_move_for_game(
+    board: Board, 
+    agent_spec: dict
+) -> Tuple[str | None, dict]:
     """
-    CẦU NỐI để GAME gọi AI.
-
-    TEAM GAME:
-        - Gọi hàm này khi tới lượt AI.
-        - Truyền Board và agent_spec vào.
-
-    TEAM AI:
-        - Implement nội dung bên trong.
-        - Trả về (uci_move, telemetry_info).
-
-    Ở repo Chess_AI_Project nhưng trong khung chat GAME, ta để NotImplemented
-    để nhắc đây là việc của TEAM AI.
+    Hàm chính để Game gọi AI.
+    
+    Args:
+        board (Board): Object bàn cờ hiện tại của game.
+        agent_spec (dict): Cấu hình bot (VD: {"type": "minimax", "level": "medium"})
+    
+    Returns:
+        uci (str | None): Nước đi dạng chuỗi "e2e4" (hoặc None nếu lỗi).
+        info (dict): Thông tin telemetry (score, depth, time, debug info).
     """
-    raise NotImplementedError("TEAM AI sẽ implement choose_move_for_game()")
+    
+    # 1. Lấy FEN từ bàn cờ game
+    # Bước này cực quan trọng để AI nhìn thấy bàn cờ giống Game
+    try:
+        fen = board.export_fen()
+    except Exception as e:
+        print(f"[AI HOOK] ❌ LỖI XUẤT FEN: {e}")
+        return None, {"error": str(e)}
+
+    # Log cho người code thấy
+    # print(f"[AI HOOK] Agent: {agent_spec.get('level', 'custom')} | FEN: {fen}")
+
+    # 2. Gọi AI qua API
+    try:
+        # Đây là hàm chúng ta đã viết trong ai/api.py
+        result = choose_move_from_fen(fen, agent_spec)
+    except Exception as e:
+        print(f"[AI HOOK] ❌ LỖI GỌI AI: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, {"error": f"AI Crash: {e}"}
+
+    # 3. Xử lý kết quả trả về
+    uci = result.get("uci")     # VD: "e2e4"
+    info = result.get("info", {}) # VD: {"score": 1000000, ...}
+
+    # 4. Debug Log đặc biệt cho Script Opening
+    # Nếu điểm số rất lớn (đang chạy script), log ra để biết
+    score = info.get("score", 0)
+    if abs(score) > 500000 and abs(score) < 2000000: # Ngưỡng điểm script
+        print(f"[AI HOOK] ⚡ BOT ĐANG CHẠY SCRIPT (Score: {score}) --> Move: {uci}")
+    else:
+        pass
+        # print(f"[AI HOOK] Move: {uci} | Score: {score} | Time: {info.get('time_ms')}ms")
+
+    # Trả về UCI và Info cho Game Controller xử lý di chuyển
+    return uci, info
+
+
+# =============================================================================
+# HELPER FUNCTIONS (CHO GAME UI/MENU)
+# =============================================================================
+
+def create_ai_config(difficulty: str = "medium") -> dict:
+    """
+    Tạo cấu hình AI theo tên độ khó.
+    Hỗ trợ các từ khóa:
+    - 'debug': Bot test kịch bản 4 nước.
+    - 'easy', 'medium', 'hard', 'expert', 'master'.
+    """
+    diff = difficulty.lower()
+    
+    if diff == "debug":
+        print("[AI HOOK] Creating DEBUG AGENT (Scripted Opening)")
+        return {"type": "minimax", "level": "hard", "use_advanced_eval": True}
+        
+    if diff in ["easy", "medium", "hard", "expert", "master"]:
+        return create_ai_for_difficulty(diff)
+    
+    # Mặc định
+    return {"type": "minimax", "level": "medium"}
+
+
+def get_ai_display_info(agent_spec: dict) -> dict:
+    """
+    Trả về thông tin để hiển thị lên UI (Tên bot, Winrate dự kiến...)
+    """
+    level = agent_spec.get("level", "unknown")
+    
+    info_map = {
+        "easy":   {"name": "Bot Easy", "winrate": "20%"},
+        "medium": {"name": "Bot Normal", "winrate": "50%"},
+        "hard":   {"name": "Bot Hard", "winrate": "80%"},
+        "expert": {"name": "Bot Expert", "winrate": "90%"},
+        "master": {"name": "Bot Master", "winrate": "99%"},
+        "debug":  {"name": "Bot Tester", "winrate": "?"},
+    }
+    
+    return info_map.get(level, {"name": "Custom Bot", "winrate": "N/A"})
 
 File app.py
 # game/app.py
@@ -970,20 +1978,21 @@ COLOR_BG           = ( 15,  15,  15)
 # Màu chữ HUD / panel
 COLOR_TEXT         = (255, 255, 255)
 
+# Màu chữ cho quân trắng / quân đen (placeholder cho asset sau này)
+COLOR_WHITE_PIECE  = (255, 255, 255)   # trắng tinh
+COLOR_BLACK_PIECE  = ( 25,  25,  25)   # gần đen, vẫn thấy trên ô sáng
 
 # Alias tên “mới” nếu sau này ông muốn dùng cho đẹp, nhưng
 # vẫn trỏ tới mấy màu ở trên để không bị lệch.
-COLOR_LIGHT    = COLOR_LIGHT_SQUARE
-COLOR_DARK     = COLOR_DARK_SQUARE
+COLOR_LIGHT     = COLOR_LIGHT_SQUARE
+COLOR_DARK      = COLOR_DARK_SQUARE
 COLOR_HIGHLIGHT = COLOR_SELECTED
-
 
 # =========================
 #  FONT
 # =========================
 # Tỉ lệ font dựa trên chiều cao 720p
 FONT_SCALE = SCREEN_HEIGHT / 720.0
-
 
 # =========================
 #  ĐỒNG HỒ CỜ VUA
@@ -992,8 +2001,147 @@ FONT_SCALE = SCREEN_HEIGHT / 720.0
 # Ví dụ: 5 phút = 300, 10 phút = 600, 15 phút = 900
 CHESS_TIME_LIMIT_SEC = 300
 
+# Online server config (sửa IP này sang IP / domain server của bạn khi cần)
+ONLINE_SERVER_HOST = "127.0.0.1"
+ONLINE_SERVER_PORT = 5000
+
 File init.py
 # game/__init__.py
+
+File network_client.py
+import socket
+import threading
+import json
+from typing import Optional, List, Dict, Any
+
+
+class NetworkClient:
+    """
+    Client TCP đơn giản:
+    - connect(host, port)
+    - send_message(dict)
+    - poll_messages() -> list[dict]
+    """
+
+    def __init__(self) -> None:
+        self._sock: Optional[socket.socket] = None
+        self._recv_thread: Optional[threading.Thread] = None
+        self._recv_buffer = ""
+        self._incoming_lock = threading.Lock()
+        self._incoming: List[Dict[str, Any]] = []
+        self.connected: bool = False
+
+    # --------- Kết nối / ngắt kết nối ----------
+
+    def connect(self, host: str, port: int, timeout: float = 5.0) -> None:
+        if self.connected:
+            return
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        s.connect((host, port))
+        s.settimeout(None)  # để thread recv block bình thường
+
+        self._sock = s
+        self.connected = True
+
+        self._recv_thread = threading.Thread(
+            target=self._recv_loop, daemon=True
+        )
+        self._recv_thread.start()
+
+    def close(self) -> None:
+        self.connected = False
+        if self._sock is not None:
+            try:
+                self._sock.close()
+            except OSError:
+                pass
+            self._sock = None
+
+    # --------- Gửi / nhận message ----------
+
+    def send_message(self, msg: Dict[str, Any]) -> None:
+        """
+        Gửi 1 dict JSON (thêm '\n' ở cuối).
+        """
+        if not self.connected or self._sock is None:
+            raise RuntimeError("Not connected")
+
+        data = json.dumps(msg) + "\n"
+        try:
+            self._sock.sendall(data.encode("utf-8"))
+        except OSError:
+            self.close()
+            raise
+
+    def poll_messages(self) -> List[Dict[str, Any]]:
+        """
+        Lấy tất cả message đã nhận được kể từ lần gọi trước.
+        Dùng trong game loop (mỗi frame gọi 1 lần).
+        """
+        with self._incoming_lock:
+            msgs = self._incoming
+            self._incoming = []
+        return msgs
+
+    # --------- Internal recv loop ----------
+
+    def _recv_loop(self) -> None:
+        assert self._sock is not None
+        s = self._sock
+
+        try:
+            while self.connected:
+                data = s.recv(4096)
+                if not data:
+                    # server đóng kết nối
+                    break
+
+                self._recv_buffer += data.decode("utf-8")
+
+                while "\n" in self._recv_buffer:
+                    line, self._recv_buffer = self._recv_buffer.split("\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        msg = json.loads(line)
+                    except json.JSONDecodeError:
+                        # bỏ qua json lỗi
+                        continue
+
+                    with self._incoming_lock:
+                        self._incoming.append(msg)
+
+        except OSError:
+            pass
+        finally:
+            self.connected = False
+            try:
+                s.close()
+            except OSError:
+                pass
+            self._sock = None
+
+File test_client.py
+from time import sleep
+from game.network_client import NetworkClient
+
+def main():
+    client = NetworkClient()
+    client.connect("127.0.0.1", 5000)
+
+    # 1) Join phòng mới (host)
+    client.send_message({"type": "join", "game_id": None})
+
+    while True:
+        msgs = client.poll_messages()
+        for m in msgs:
+            print("RECV:", m)
+        sleep(0.1)
+
+if __name__ == "__main__":
+    main()
 
 
 Folder game/input
@@ -1032,55 +2180,149 @@ Folder game/render
 File board_renderer.py
 # game/render/board_renderer.py
 import pygame
+
 from game.config import (
     BOARD_LEFT,
     BOARD_TOP,
     TILE_SIZE,
     BOARD_SIZE,
+    BOARD_PIXEL_SIZE,
     COLOR_LIGHT_SQUARE,
     COLOR_DARK_SQUARE,
     COLOR_SELECTED,
-    COLOR_HIGHLIGHT,
+    COLOR_MOVE_HINT,
     COLOR_LAST_MOVE,
 )
 
 
+def _square_rect(file: int, rank: int) -> pygame.Rect:
+    """
+    Trả về rect của ô (file, rank) trên màn hình.
+
+    file: 0..7 (a..h, trái -> phải)
+    rank: 0..7 (1..8, dưới -> trên)
+    """
+    x = BOARD_LEFT + file * TILE_SIZE
+    y = BOARD_TOP + (BOARD_SIZE - 1 - rank) * TILE_SIZE
+    return pygame.Rect(x, y, TILE_SIZE, TILE_SIZE)
+
+
 def draw_board(
     surface: pygame.Surface,
-    selected_square: tuple[int, int] | None = None,
-    highlight_squares: list[tuple[int, int]] | None = None,
-    last_move_squares: list[tuple[int, int]] | None = None,
+    selected_square,
+    move_squares,
+    capture_squares,
+    last_move_squares,
 ):
     """
-    Vẽ bàn 8x8.
-    - selected_square: ô đang chọn
-    - highlight_squares: ô có thể đi tới
-    - last_move_squares: 2 ô from/to của nước đi cuối
-    """
-    if highlight_squares is None:
-        highlight_squares = []
-    if last_move_squares is None:
-        last_move_squares = []
+    Vẽ bàn cờ + hiệu ứng:
 
+    - Panel nền phía sau bàn
+    - Ô sáng / tối
+    - Ô của nước đi cuối (last_move_squares)
+    - Ô có thể đi tới (move_squares + capture_squares)
+    - Ô ăn quân (capture_squares) có viền đặc biệt
+    - Ô đang chọn (selected_square)
+    """
+
+    move_squares = move_squares or []
+    capture_squares = capture_squares or []
+    last_move_squares = last_move_squares or []
+
+    move_set = set(move_squares)
+    capture_set = set(capture_squares)
+    all_move_set = move_set | capture_set
+
+    # -----------------------
+    #  PANEL NỀN + KHUNG
+    # -----------------------
+    panel_margin = int(TILE_SIZE * 0.35)
+    panel_rect = pygame.Rect(
+        BOARD_LEFT - panel_margin,
+        BOARD_TOP - panel_margin,
+        BOARD_PIXEL_SIZE + panel_margin * 2,
+        BOARD_PIXEL_SIZE + panel_margin * 2,
+    )
+
+    panel_color = (10, 10, 10)
+    panel_border = (60, 60, 60)
+    border_radius = int(TILE_SIZE * 0.25)
+
+    pygame.draw.rect(surface, panel_color, panel_rect, border_radius=border_radius)
+    pygame.draw.rect(surface, panel_border, panel_rect, width=2, border_radius=border_radius)
+
+    # -----------------------
+    #  NỀN Ô SÁNG / TỐI
+    # -----------------------
     for rank in range(BOARD_SIZE):
         for file in range(BOARD_SIZE):
-            rank_from_top = BOARD_SIZE - 1 - rank
-            x = BOARD_LEFT + file * TILE_SIZE
-            y = BOARD_TOP + rank_from_top * TILE_SIZE
-
-            base_color = COLOR_LIGHT_SQUARE if (file + rank) % 2 == 0 else COLOR_DARK_SQUARE
-            rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE)
-
-            if selected_square is not None and (file, rank) == selected_square:
-                color = COLOR_SELECTED
-            elif (file, rank) in highlight_squares:
-                color = COLOR_HIGHLIGHT
-            elif (file, rank) in last_move_squares:
-                color = COLOR_LAST_MOVE
-            else:
-                color = base_color
-
+            rect = _square_rect(file, rank)
+            color = COLOR_LIGHT_SQUARE if (file + rank) % 2 == 0 else COLOR_DARK_SQUARE
             pygame.draw.rect(surface, color, rect)
+
+    tile_overlay = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+
+    # -----------------------
+    #  NƯỚC ĐI CUỐI
+    # -----------------------
+    for file, rank in last_move_squares:
+        rect = _square_rect(file, rank)
+
+        tile_overlay.fill((0, 0, 0, 0))
+        r, g, b = COLOR_LAST_MOVE
+        tile_overlay.fill((r, g, b, 80))
+        surface.blit(tile_overlay, rect.topleft)
+
+        border_width = max(2, TILE_SIZE // 26)
+        pygame.draw.rect(surface, COLOR_LAST_MOVE, rect, width=border_width)
+
+    # -----------------------
+    #  TẤT CẢ Ô ĐI ĐƯỢC (MOVE + CAPTURE)
+    # -----------------------
+    if all_move_set:
+        for file, rank in all_move_set:
+            rect = _square_rect(file, rank)
+
+            tile_overlay.fill((0, 0, 0, 0))
+            r, g, b = COLOR_MOVE_HINT
+            # phủ chung cho mọi ô có thể đi
+            tile_overlay.fill((r, g, b, 110))
+            surface.blit(tile_overlay, rect.topleft)
+
+    # -----------------------
+    #  Ô ĂN QUÂN (CAPTURE) – VIỀN ĐẶC BIỆT
+    # -----------------------
+    if capture_set:
+        capture_border_color = (220, 120, 80)  # cam nhẹ
+        for file, rank in capture_set:
+            rect = _square_rect(file, rank)
+            inner = rect.inflate(-TILE_SIZE * 0.12, -TILE_SIZE * 0.12)
+            pygame.draw.rect(
+                surface,
+                capture_border_color,
+                inner,
+                width=max(2, TILE_SIZE // 22),
+            )
+
+    # -----------------------
+    #  Ô ĐANG CHỌN
+    # -----------------------
+    if selected_square is not None:
+        file, rank = selected_square
+        rect = _square_rect(file, rank)
+
+        tile_overlay.fill((0, 0, 0, 0))
+        r, g, b = COLOR_SELECTED
+        tile_overlay.fill((r, g, b, 140))
+        surface.blit(tile_overlay, rect.topleft)
+
+        inner_rect = rect.inflate(-TILE_SIZE * 0.10, -TILE_SIZE * 0.10)
+        pygame.draw.rect(
+            surface,
+            COLOR_SELECTED,
+            inner_rect,
+            width=max(2, TILE_SIZE // 18),
+        )
 
 File hud_renderer.py
 # game/render/hud_renderer.py
@@ -1112,38 +2354,77 @@ def draw_hud(
 File piece_renderer.py
 # game/render/piece_renderer.py
 import pygame
-from core.board import Board
+from pathlib import Path
 from game.config import (
     BOARD_LEFT,
     BOARD_TOP,
     TILE_SIZE,
     BOARD_SIZE,
-    COLOR_TEXT,
+    COLOR_WHITE_PIECE,
+    COLOR_BLACK_PIECE,
 )
+place = './assets/images/pieces/'
 
+def draw_pieces(surface: pygame.Surface, board, font: pygame.font.Font):
+    """
+    Vẽ các quân cờ lên bàn.
 
-def draw_pieces(surface: pygame.Surface, board: Board, font: pygame.font.Font):
+    - `board.piece_symbol_at(file, rank)` trả về:
+        + 'P','N','B','R','Q','K'  cho quân TRẮNG
+        + 'p','n','b','r','q','k'  cho quân ĐEN
+        + None / '' nếu ô trống.
+
+    - Ta luôn vẽ bằng chữ HOA (P,N,B,R,Q,K) để sau này
+      đổi qua asset hình quân cờ cũng dễ map.
+    - Màu chữ:
+        + COLOR_WHITE_PIECE cho quân trắng
+        + COLOR_BLACK_PIECE cho quân đen
     """
-    Vẽ quân cờ bằng text đơn giản (P, N, B, R, Q, K).
-    Sau này có thể thay bằng ảnh PNG.
-    """
+
     for rank in range(BOARD_SIZE):
         for file in range(BOARD_SIZE):
             symbol = board.piece_symbol_at(file, rank)
             if not symbol:
                 continue
 
-            # rank 0 ở dưới, nên phải tính lại y theo rank_from_top
-            rank_from_top = BOARD_SIZE - 1 - rank
-            x = BOARD_LEFT + file * TILE_SIZE + TILE_SIZE // 2
-            y = BOARD_TOP + rank_from_top * TILE_SIZE + TILE_SIZE // 2
+            # Trắng = chữ hoa, Đen = chữ thường
+            is_white = symbol.isupper()
 
-            text = symbol.upper()
-            color = COLOR_TEXT
+            # Chọn màu vẽ quân
+            text_color = COLOR_WHITE_PIECE if is_white else COLOR_BLACK_PIECE
 
-            text_surf = font.render(text, True, color)
-            text_rect = text_surf.get_rect(center=(x, y))
-            surface.blit(text_surf, text_rect)
+            # Chỉ lấy chữ hoa để hiển thị
+            char = symbol.upper()
+
+            # Tính toạ độ ô trên màn hình
+            # file: 0..7 (a..h) -> x tăng sang phải
+            # rank: 0..7 (1..8) -> ta vẽ rank 0 ở hàng dưới cùng
+            x = BOARD_LEFT + file * TILE_SIZE
+            y = BOARD_TOP + (BOARD_SIZE - 1 - rank) * TILE_SIZE
+
+
+            global place
+            cx = x + TILE_SIZE // 2
+            cy = y + TILE_SIZE // 2
+            image = None
+            if is_white:
+                if char == "P": image = pygame.image.load(place + "w_pawn.png").convert_alpha()
+                if char == "N": image = pygame.image.load(place + "w_knight.png").convert_alpha()
+                if char == "B": image = pygame.image.load(place + "w_bishop.png").convert_alpha()
+                if char == "R": image = pygame.image.load(place + "w_rook.png").convert_alpha()
+                if char == "Q": image = pygame.image.load(place + "w_queen.png").convert_alpha()
+                if char == "K": image = pygame.image.load(place + "w_king.png").convert_alpha()
+            if not is_white:
+                if char == "P": image = pygame.image.load(place + "b_pawn.png").convert_alpha()
+                if char == "N": image = pygame.image.load(place + "b_knight.png").convert_alpha()
+                if char == "B": image = pygame.image.load(place + "b_bishop.png").convert_alpha()
+                if char == "R": image = pygame.image.load(place + "b_rook.png").convert_alpha()
+                if char == "Q": image = pygame.image.load(place + "b_queen.png").convert_alpha()
+                if char == "K": image = pygame.image.load(place + "b_king.png").convert_alpha()
+            if image is None:
+                return
+            text_rect = image.get_rect(center=(cx, cy))
+            surface.blit(image, text_rect)
 
 File side_panel_renderer.py
 # game/render/side_panel_renderer.py
@@ -1170,6 +2451,30 @@ def _format_time(sec: float) -> str:
     return f"{minutes:02d}:{seconds:02d}"
 
 
+def _short_status_text(status_text: str) -> str:
+    """
+    Rút gọn status cho panel bên trái để đỡ bị dài / tràn.
+    Ví dụ: "White wins by checkmate" -> "White wins"
+           "Draw (Stalemate)"         -> "Draw"
+    Các trạng thái ngắn như "Check!", "Normal" giữ nguyên.
+    """
+    if not status_text:
+        return "Normal"
+
+    s = status_text
+
+    # White wins by X / Black wins by X
+    if "wins" in s and " by " in s:
+        # "White wins by checkmate" -> "White wins"
+        return s.split(" by ")[0]
+
+    # Draw (xxx)
+    if s.startswith("Draw"):
+        return "Draw"
+
+    return s
+
+
 def draw_side_panels(
     surface: pygame.Surface,
     font: pygame.font.Font,
@@ -1184,12 +2489,12 @@ def draw_side_panels(
 
     - BÊN TRÁI (Game Info):
         + Turn: White/Black
-        + Status: Check! / Normal / kết quả text từ status_text
+        + Status: Check! / Normal / White wins / Black wins / Draw
         + Move: số lượt (fullmove)
 
     - BÊN PHẢI (Chess Clock):
-        + Đồng hồ cho White & Black
-        + Bên đang tới lượt có dấu ◀
+        + Đồng hồ cho White & Black (đếm ngược)
+        + Bên đang tới lượt có dấu "<"
     """
 
     # Kích thước panel trái/phải
@@ -1208,6 +2513,8 @@ def draw_side_panels(
     fullmove = ply_count // 2 + 1 if ply_count > 0 else 1
     base_minutes = CHESS_TIME_LIMIT_SEC // 60
 
+    short_status = _short_status_text(status_text)
+
     # ---------- PANEL TRÁI: GAME INFO ----------
     if left_width >= 120:
         cx = left_width // 2
@@ -1223,12 +2530,8 @@ def draw_side_panels(
         turn_rect = turn_surf.get_rect(center=(cx, center_y - line_h))
         surface.blit(turn_surf, turn_rect)
 
-        # Status
-        if status_text:
-            st = status_text
-        else:
-            st = "Normal"
-        status_surf = font.render(f"Status: {st}", True, COLOR_TEXT)
+        # Status (đã rút gọn)
+        status_surf = font.render(f"Status: {short_status}", True, COLOR_TEXT)
         status_rect = status_surf.get_rect(center=(cx, center_y))
         surface.blit(status_surf, status_rect)
 
@@ -1252,14 +2555,14 @@ def draw_side_panels(
         surface.blit(title_surf, title_rect)
 
         # White time
-        w_tag = "◀" if turn_white else ""
+        w_tag = "<" if turn_white else ""   # dùng '<' cho chắc font
         w_time = _format_time(white_time_sec)
         white_surf = font.render(f"White: {w_time} {w_tag}", True, COLOR_TEXT)
         white_rect = white_surf.get_rect(center=(cx, center_y - line_h))
         surface.blit(white_surf, white_rect)
 
         # Black time
-        b_tag = "◀" if not turn_white else ""
+        b_tag = "<" if not turn_white else ""
         b_time = _format_time(black_time_sec)
         black_surf = font.render(f"Black: {b_time} {b_tag}", True, COLOR_TEXT)
         black_rect = black_surf.get_rect(center=(cx, center_y))
@@ -1300,6 +2603,86 @@ def load_game(slot_path: Path = DEFAULT_SLOT) -> tuple[Board, dict] | None:
 
 
 Folder game/scenes
+File ai_selection.py
+# game/scenes/ai_selection.py
+import pygame
+from .base import SceneBase
+from game.ui.widgets import Button
+from game.config import SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG, COLOR_TEXT
+from ai.api import get_available_agents
+
+
+class AISelectionScene(SceneBase):
+    def __init__(self, app, human_white=True):
+        super().__init__(app)
+        self.human_white = human_white
+
+        self.font_title = pygame.font.Font(None, 64)
+        self.font_btn = pygame.font.Font(None, 42)
+        self.buttons = []
+
+        center_x = SCREEN_WIDTH // 2
+        start_y = 180
+        gap = 75
+
+        agents = get_available_agents()
+
+        for key, info in agents.items():
+            config = info["config"]
+            name = info.get("name", key.replace("_", " ").title())
+            if info.get("badge"):
+                name += f" [{info['badge']}]"
+
+            btn = Button(
+                pygame.Rect(0, 0, 460, 65),
+                name,
+                self.font_btn,
+                callback=lambda c=config: self.start_game(c)
+            )
+            btn.rect.centerx = center_x
+            btn.rect.y = start_y + len(self.buttons) * gap
+            self.buttons.append(btn)
+
+        # Back button
+        back = Button(
+            pygame.Rect(0, 0, 200, 50),
+            "Back",
+            self.font_btn,
+            callback=self.go_back
+        )
+        back.rect.centerx = center_x
+        back.rect.y = start_y + len(self.buttons) * gap + 20
+        self.buttons.append(back)
+
+    def start_game(self, agent_spec):
+        from .game_vs_ai import GameVsAIScene
+        self.app.change_scene(GameVsAIScene, human_white=self.human_white, agent_spec=agent_spec)
+
+    def go_back(self):
+        from .menu_play import PlayMenuScene
+        self.app.change_scene(PlayMenuScene)
+
+    def handle_events(self, events):
+        for event in events:
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                for btn in self.buttons:
+                    btn.handle_event(event)
+
+    def render(self, surface):
+        surface.fill(COLOR_BG)
+
+        title = self.font_title.render("Choose AI Opponent", True, COLOR_TEXT)
+        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 100))
+        surface.blit(title, title_rect)
+
+        side = "White" if self.human_white else "Black"
+        subtitle = self.font_btn.render(f"You play as {side}", True, (180, 180, 180))
+        subtitle_rect = subtitle.get_rect(center=(SCREEN_WIDTH // 2, 150))
+        surface.blit(subtitle, subtitle_rect)
+
+        for btn in self.buttons:
+            btn.draw(surface)
+
 File base.py
 # game/scenes/base.py
 import pygame
@@ -1325,6 +2708,86 @@ class SceneBase:
 
     def render(self, surface: pygame.Surface):
         surface.fill((0, 0, 0))
+
+File credits.py
+# game/scenes/credits.py
+import pygame
+from typing import List
+
+from .base import SceneBase
+from game.ui.widgets import Button
+from game.config import SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG, COLOR_TEXT
+
+
+class CreditsScene(SceneBase):
+    """
+    Màn hình Credit.
+    Team có thể sửa self.lines để ghi tên thành viên, GVHD, v.v.
+    """
+
+    def __init__(self, app):
+        super().__init__(app)
+
+        self.font_title = pygame.font.Font(None, 64)
+        self.font_text = pygame.font.Font(None, 28)
+        self.font_button = pygame.font.Font(None, 36)
+
+        self.buttons: List[Button] = []
+
+        btn_width = 220
+        btn_height = 50
+        center_x = SCREEN_WIDTH // 2
+
+        rect_back = pygame.Rect(0, 0, btn_width, btn_height)
+        rect_back.center = (center_x, SCREEN_HEIGHT - 80)
+        self.buttons.append(
+            Button(
+                rect_back,
+                "Back",
+                self.font_button,
+                callback=self._on_back,
+            )
+        )
+
+        # TODO: sửa lại thành tên thật của nhóm
+        self.lines = [
+            "Chess_AI_Project",
+            "",
+            "Game Team: (điền tên thành viên)",
+            "AI Team: (điền tên thành viên)",
+            "Lecturer: (GVHD)",
+            "",
+            "Built with Python, pygame, python-chess.",
+        ]
+
+    def _on_back(self):
+        from .menu_main import MainMenuScene
+        self.app.change_scene(MainMenuScene)
+
+    def handle_events(self, events):
+        for event in events:
+            for btn in self.buttons:
+                btn.handle_event(event)
+
+    def update(self, dt: float):
+        pass
+
+    def render(self, surface: pygame.Surface):
+        surface.fill(COLOR_BG)
+
+        title_surf = self.font_title.render("Credits", True, COLOR_TEXT)
+        title_rect = title_surf.get_rect(center=(SCREEN_WIDTH // 2, 100))
+        surface.blit(title_surf, title_rect)
+
+        y = 170
+        for line in self.lines:
+            text_surf = self.font_text.render(line, True, COLOR_TEXT)
+            text_rect = text_surf.get_rect(center=(SCREEN_WIDTH // 2, y))
+            surface.blit(text_surf, text_rect)
+            y += 32
+
+        for btn in self.buttons:
+            btn.draw(surface)
 
 File game_local.py
 # game/scenes/game_local.py
@@ -1362,32 +2825,40 @@ class GameLocalScene(SceneBase):
         super().__init__(app)
         self.mode = mode
 
-        self.board = Board()  # trạng thái mới
+        # Trạng thái ván cờ
+        self.board = Board()
+
+        # Font
         self.font_piece = pygame.font.Font(None, int(40 * FONT_SCALE))
         self.font_hud = pygame.font.Font(None, int(32 * FONT_SCALE))
+        self.font_title_big = pygame.font.Font(None, int(72 * FONT_SCALE))
+        self.font_title_small = pygame.font.Font(None, int(40 * FONT_SCALE))
+        self.font_button = pygame.font.Font(None, int(36 * FONT_SCALE))
 
         # Lưu ô đang chọn (file, rank) hoặc None
         self.selected_square: Optional[Tuple[int, int]] = None
-        # List ô được highlight (nước đi hợp lệ từ selected)
+        # Ô đi được (không ăn quân)
         self.highlight_squares: List[Tuple[int, int]] = []
+        # Ô ăn quân
+        self.capture_squares: List[Tuple[int, int]] = []
         # 2 ô from/to của nước đi cuối
         self.last_move_squares: List[Tuple[int, int]] = []
 
-        # Đếm số nước đi (ply) – mỗi lần một bên đi 1 nước
+        # Đếm số nước đi (ply)
         self.ply_count: int = 0
 
-        # Đồng hồ cờ vua: mỗi bên có CHESS_TIME_LIMIT_SEC giây, đếm ngược
+        # Đồng hồ cờ vua (đếm ngược, mỗi bên CHESS_TIME_LIMIT_SEC giây)
         self.white_time_sec: float = float(CHESS_TIME_LIMIT_SEC)
         self.black_time_sec: float = float(CHESS_TIME_LIMIT_SEC)
 
-        # Lưu list nước hợp lệ (UCI)
+        # Danh sách nước hợp lệ hiện tại (UCI)
         self.legal_moves_uci: List[str] = generate_legal_moves(self.board)
 
         # Trạng thái game
-        self.game_over = False
+        self.game_over: bool = False
         self.game_result: str = "ongoing"  # 'white_win' | 'black_win' | 'draw' | 'ongoing'
-        self.game_over_reason: str = ""
-        self.status_text: str = ""
+        self.game_over_reason: str = ""    # "Checkmate" | "Stalemate" | "Time out" | ...
+        self.status_text: str = ""         # string hiển thị trên HUD
 
         # ====== PHONG CẤP ======
         self.promotion_active: bool = False
@@ -1396,11 +2867,10 @@ class GameLocalScene(SceneBase):
 
         # ====== GAME OVER OVERLAY ======
         self.game_over_buttons: List[Button] = []
-        self.font_title_big = pygame.font.Font(None, int(72 * FONT_SCALE))
-        self.font_title_small = pygame.font.Font(None, int(40 * FONT_SCALE))
-        self.font_button = pygame.font.Font(None, int(36 * FONT_SCALE))
 
-    # ---------- Helpers chung ----------
+    # ------------------------------------------------------------------
+    #  Helpers chung
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _uci_to_from_to(uci: str) -> Tuple[Tuple[int, int], Tuple[int, int]]:
@@ -1427,11 +2897,11 @@ class GameLocalScene(SceneBase):
 
     def _update_game_status(self):
         """
-        Cập nhật biến self.game_over, self.game_result, self.status_text,...
-        sau mỗi nước đi (theo luật cờ, KHÔNG tính hết giờ).
+        Cập nhật self.game_over, self.game_result, self.status_text
+        theo luật cờ (KHÔNG đụng tới case hết giờ).
         """
         if self.game_over:
-            # Nếu đã hết giờ rồi thì không override trạng thái nữa
+            # Nếu đã hết giờ / đã game over rồi thì không override nữa
             return
 
         status = get_game_result(self.board)
@@ -1479,18 +2949,25 @@ class GameLocalScene(SceneBase):
         try:
             self.board.apply_uci(uci)
         except ValueError:
+            # Không làm gì nếu move fail
             return False
 
         # Ghi lại nước đi cuối
         self.last_move_squares = [src, dst]
 
-        # Tăng số ply (mỗi lần có nước đi)
+        # Tăng ply
         self.ply_count += 1
 
-        # Cập nhật danh sách nước hợp lệ & status
+        # Làm mới danh sách nước hợp lệ
         self.legal_moves_uci = generate_legal_moves(self.board)
-        self._update_game_status()
 
+        # Clear selection / highlight
+        self.selected_square = None
+        self.highlight_squares = []
+        self.capture_squares = []
+
+        # Cập nhật trạng thái game theo luật
+        self._update_game_status()
         return True
 
     def _on_flag_timeout(self, white_flag: bool):
@@ -1514,7 +2991,9 @@ class GameLocalScene(SceneBase):
 
         self._create_game_over_buttons()
 
-    # ---------- PHONG CẤP: UI & logic ----------
+    # ------------------------------------------------------------------
+    #  PHONG CẤP
+    # ------------------------------------------------------------------
 
     def _start_promotion_choice(self, promotion_moves: List[str]):
         """
@@ -1540,6 +3019,7 @@ class GameLocalScene(SceneBase):
         for i, piece_code in enumerate(order):
             if piece_code not in self.promotion_choices:
                 continue
+
             rect = pygame.Rect(0, 0, btn_size, btn_size)
             rect.topleft = (start_x + i * (btn_size + gap), center_y)
 
@@ -1571,11 +3051,9 @@ class GameLocalScene(SceneBase):
         self.promotion_choices.clear()
         self.promotion_buttons.clear()
 
-        # Reset chọn ô
-        self.selected_square = None
-        self.highlight_squares = []
-
-    # ---------- GAME OVER OVERLAY ----------
+    # ------------------------------------------------------------------
+    #  GAME OVER OVERLAY
+    # ------------------------------------------------------------------
 
     def _create_game_over_buttons(self):
         """Tạo nút Play Again / Back to Menu khi game over."""
@@ -1610,7 +3088,9 @@ class GameLocalScene(SceneBase):
         from .menu_main import MainMenuScene
         self.app.change_scene(MainMenuScene)
 
-    # ---------- Event handling ----------
+    # ------------------------------------------------------------------
+    #  EVENT HANDLING
+    # ------------------------------------------------------------------
 
     def handle_events(self, events: List[pygame.event.Event]):
         # Ưu tiên: nếu đang chọn phong cấp
@@ -1657,13 +3137,16 @@ class GameLocalScene(SceneBase):
         if sq is None:
             self.selected_square = None
             self.highlight_squares = []
+            self.capture_squares = []
             return
 
         file, rank = sq
         piece_symbol = self.board.piece_symbol_at(file, rank)
 
+        # --------------------------------------------------------------
+        #  Chưa chọn quân -> chọn quân
+        # --------------------------------------------------------------
         if self.selected_square is None:
-            # Chưa chọn quân
             if not piece_symbol:
                 return
 
@@ -1673,53 +3156,71 @@ class GameLocalScene(SceneBase):
 
             self.selected_square = (file, rank)
             moves_from = self._legal_moves_from_square(file, rank)
-            dest_squares: List[Tuple[int, int]] = []
+
+            normal_squares: List[Tuple[int, int]] = []
+            capture_squares: List[Tuple[int, int]] = []
+
             for uci in moves_from:
                 _, (tf, tr) = self._uci_to_from_to(uci)
-                dest_squares.append((tf, tr))
-            self.highlight_squares = dest_squares
-        else:
-            # Đã chọn quân, giờ chọn đích
-            src_file, src_rank = self.selected_square
 
-            if (file, rank) == (src_file, src_rank):
-                self.selected_square = None
-                self.highlight_squares = []
-                return
+                # Ô đích hiện tại có quân đối phương? -> nước ăn
+                dest_piece = self.board.piece_symbol_at(tf, tr)
+                if dest_piece and (dest_piece.isupper() != self.board.turn_white):
+                    capture_squares.append((tf, tr))
+                else:
+                    normal_squares.append((tf, tr))
 
-            candidate_moves = self._legal_moves_from_square(src_file, src_rank)
+            self.highlight_squares = normal_squares
+            self.capture_squares = capture_squares
+            return
 
-            promotion_moves: List[str] = []
-            normal_move: Optional[str] = None
+        # --------------------------------------------------------------
+        #  Đã chọn quân -> chọn đích
+        # --------------------------------------------------------------
+        src_file, src_rank = self.selected_square
 
-            for uci in candidate_moves:
-                (_, _), (tf, tr) = self._uci_to_from_to(uci)
-                if tf == file and tr == rank:
-                    if len(uci) == 5:
-                        promotion_moves.append(uci)
-                    else:
-                        normal_move = uci
-
-            if promotion_moves:
-                # Bật UI chọn phong cấp
-                self._start_promotion_choice(promotion_moves)
-                return
-
-            if normal_move is None:
-                self.selected_square = None
-                self.highlight_squares = []
-                return
-
-            success = self._apply_move_and_update_state(normal_move)
-            if not success:
-                self.selected_square = None
-                self.highlight_squares = []
-                return
-
+        # Click lại đúng ô đang chọn -> bỏ chọn
+        if (file, rank) == (src_file, src_rank):
             self.selected_square = None
             self.highlight_squares = []
+            self.capture_squares = []
+            return
 
-    # ---------- Update & Render ----------
+        candidate_moves = self._legal_moves_from_square(src_file, src_rank)
+
+        promotion_moves: List[str] = []
+        normal_move: Optional[str] = None
+
+        for uci in candidate_moves:
+            (_, _), (tf, tr) = self._uci_to_from_to(uci)
+            if tf == file and tr == rank:
+                if len(uci) == 5:
+                    promotion_moves.append(uci)
+                else:
+                    normal_move = uci
+
+        # Nếu là ô phong cấp -> bật popup
+        if promotion_moves:
+            self._start_promotion_choice(promotion_moves)
+            return
+
+        if normal_move is None:
+            # Click vào chỗ không hợp lệ -> clear chọn
+            self.selected_square = None
+            self.highlight_squares = []
+            self.capture_squares = []
+            return
+
+        # Thực hiện nước đi thường
+        success = self._apply_move_and_update_state(normal_move)
+        if not success:
+            self.selected_square = None
+            self.highlight_squares = []
+            self.capture_squares = []
+
+    # ------------------------------------------------------------------
+    #  UPDATE & RENDER
+    # ------------------------------------------------------------------
 
     def update(self, dt: float):
         """
@@ -1742,15 +3243,20 @@ class GameLocalScene(SceneBase):
 
     def render(self, surface: pygame.Surface):
         surface.fill(COLOR_BG)
+
+        # Bàn cờ + hiệu ứng
         draw_board(
             surface,
             self.selected_square,
             self.highlight_squares,
+            self.capture_squares,
             self.last_move_squares,
         )
+
+        # Quân cờ
         draw_pieces(surface, self.board, self.font_piece)
 
-        # HUD trên cùng (hiện không vẽ gì, giữ để kiến trúc thống nhất)
+        # HUD trên cùng (turn + status)
         draw_hud(
             surface,
             self.board,
@@ -1771,13 +3277,15 @@ class GameLocalScene(SceneBase):
             self.status_text,
         )
 
+        # Overlay (game over / phong cấp)
         if self.game_over:
             self._render_game_over_overlay(surface)
         elif self.promotion_active:
-            # Nếu phong cấp đang mở thì ưu tiên vẽ popup này (game chưa over)
             self._render_promotion_popup(surface)
 
-    # ---------- Render overlay ----------
+    # ------------------------------------------------------------------
+    #  RENDER OVERLAY
+    # ------------------------------------------------------------------
 
     def _render_promotion_popup(self, surface: pygame.Surface):
         overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
@@ -1828,6 +3336,687 @@ class GameLocalScene(SceneBase):
         for btn in self.game_over_buttons:
             btn.draw(surface)
 
+File game_online.py
+# filepath: c:\Users\Win 10\Desktop\Update Machine learning\Chess_AI_Project\game\scenes\game_online.py
+# game/scenes/game_online.py
+import pygame
+from typing import List, Tuple, Optional, Dict, Any
+
+from .base import SceneBase
+from core.board import Board
+from core.rules import generate_legal_moves, get_game_result
+from game.config import (
+    COLOR_BG,
+    COLOR_TEXT,
+    SCREEN_WIDTH,
+    SCREEN_HEIGHT,
+    TILE_SIZE,
+    FONT_SCALE,
+)
+from game.input.mouse import pixel_to_board_square
+from game.render.board_renderer import draw_board
+from game.render.piece_renderer import draw_pieces
+from game.render.hud_renderer import draw_hud
+from game.render.side_panel_renderer import draw_side_panels
+from game.ui.widgets import Button
+from game.network_client import NetworkClient
+
+
+class GameOnlineScene(SceneBase):
+    """
+    Scene chơi cờ online 1v1, sync với server.
+    - Không tự apply move local, mọi thứ theo state từ server.
+    """
+
+    def __init__(
+        self,
+        app,
+        network_client: NetworkClient,
+        room_id: str,
+        player_color: str,  # "white" hoặc "black"
+    ):
+        super().__init__(app)
+
+        self.client = network_client
+        self.room_id = room_id
+        self.player_color = player_color  # "white" / "black"
+
+        self.board = Board()
+        self.font_piece = pygame.font.Font(None, int(40 * FONT_SCALE))
+        self.font_hud = pygame.font.Font(None, int(32 * FONT_SCALE))
+
+        self.selected_square: Optional[Tuple[int, int]] = None
+        self.highlight_squares: List[Tuple[int, int]] = []
+        self.last_move_squares: List[Tuple[int, int]] = []
+
+        self.ply_count: int = 0  # có thể suy ra từ FEN fullmove nếu muốn
+
+        # Thời gian: giá trị hiển thị (nội suy từ server)
+        self.white_time_sec: float = 0.0
+        self.black_time_sec: float = 0.0
+
+        # Bản gốc từ server + mốc sync để nội suy
+        self._server_white_time: float = 0.0
+        self._server_black_time: float = 0.0
+        self._last_clock_sync: float = 0.0  # giây, pygame.time.get_ticks()/1000.0
+
+
+        self.legal_moves_uci: List[str] = []  # chỉ dùng để highlight / client-side UX
+
+        self.legal_moves_uci: List[str] = generate_legal_moves(self.board)
+
+
+        self.game_over = False
+        self.game_result: str = "ongoing"
+        self.game_over_reason: str = ""
+        self.status_text: str = f"Room {room_id} | You are {player_color}"
+
+        # ========= Promotion =========
+        self.promotion_active: bool = False
+        self.promotion_choices: Dict[str, str] = {}
+        self.promotion_buttons: List[Button] = []
+
+        # ========= Game over overlay =========
+        self.game_over_buttons: List[Button] = []
+        self.font_title_big = pygame.font.Font(None, int(72 * FONT_SCALE))
+        self.font_title_small = pygame.font.Font(None, int(40 * FONT_SCALE))
+        self.font_button = pygame.font.Font(None, int(36 * FONT_SCALE))
+
+    # ---------- Helpers ----------
+
+    @staticmethod
+    def _uci_to_from_to(uci: str) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+        file_from = ord(uci[0]) - ord("a")
+        rank_from = int(uci[1]) - 1
+        file_to = ord(uci[2]) - ord("a")
+        rank_to = int(uci[3]) - 1
+        return (file_from, rank_from), (file_to, rank_to)
+
+    def _legal_moves_from_square(self, file: int, rank: int) -> List[str]:
+        res: List[str] = []
+        for uci in self.legal_moves_uci:
+            (ff, rf), _ = self._uci_to_from_to(uci)
+            if ff == file and rf == rank:
+                res.append(uci)
+        return res
+
+    def _update_game_status_from_server(self, result: str):
+        """
+        Server gửi result trực tiếp: 'white_win' | 'black_win' | 'draw' | 'ongoing'.
+        Ta dùng để set game_over + text.
+        """
+        self.game_result = result
+        if result == "ongoing":
+            self.game_over = False
+            self.game_over_reason = ""
+            return
+
+        self.game_over = True
+        if result == "white_win":
+            self.status_text = "White wins"
+        elif result == "black_win":
+            self.status_text = "Black wins"
+        elif result == "draw":
+            self.status_text = "Draw"
+        else:
+            self.status_text = "Game over"
+
+        # Không có detail từ server, tạm để reason trống
+        self.game_over_reason = ""
+        self._create_game_over_buttons()
+
+    def _on_flag_timeout(self, white_flag: bool):
+        # Online hiện chưa dùng đồng hồ, giữ cho API giống local.
+        pass
+
+    # ---------- Promotion UI (local only, dùng để chọn piece cho UCI có 5 kí tự) ----------
+
+    def _start_promotion_choice(self, promotion_moves: List[str]):
+        self.promotion_active = True
+        self.promotion_choices.clear()
+        self.promotion_buttons.clear()
+
+        order = ["Q", "R", "B", "N"]
+        for uci in promotion_moves:
+            promo_char = uci[4].upper()
+            if promo_char in order:
+                self.promotion_choices[promo_char] = uci
+
+        btn_size = int(TILE_SIZE * 0.8)
+        gap = int(TILE_SIZE * 0.2)
+        total_width = len(order) * btn_size + (len(order) - 1) * gap
+        start_x = (SCREEN_WIDTH - total_width) // 2
+        center_y = SCREEN_HEIGHT // 2 + int(TILE_SIZE * 0.5)
+
+        for i, piece_code in enumerate(order):
+            if piece_code not in self.promotion_choices:
+                continue
+            rect = pygame.Rect(0, 0, btn_size, btn_size)
+            rect.topleft = (start_x + i * (btn_size + gap), center_y)
+
+            def make_cb(code=piece_code):
+                return lambda: self._on_promotion_choice(code)
+
+            btn = Button(
+                rect=rect,
+                text=piece_code,
+                font=self.font_button,
+                callback=make_cb(),
+            )
+            self.promotion_buttons.append(btn)
+
+    def _on_promotion_choice(self, piece_code: str):
+        uci = self.promotion_choices.get(piece_code)
+        if not uci:
+            return
+
+        self._send_move(uci)
+        # Đóng UI; board sẽ update khi server gửi state mới
+        self.promotion_active = False
+        self.promotion_choices.clear()
+        self.promotion_buttons.clear()
+        self.selected_square = None
+        self.highlight_squares = []
+
+    # ---------- Game over overlay ----------
+
+    def _create_game_over_buttons(self):
+        self.game_over_buttons.clear()
+
+        btn_w = int(TILE_SIZE * 3.0)
+        btn_h = int(TILE_SIZE * 0.8)
+        gap = int(TILE_SIZE * 0.5)
+
+        center_x = SCREEN_WIDTH // 2
+        center_y = SCREEN_HEIGHT // 2 + int(TILE_SIZE * 0.8)
+
+        rect_again = pygame.Rect(0, 0, btn_w, btn_h)
+        rect_again.center = (center_x - (btn_w // 2 + gap // 2), center_y)
+        self.game_over_buttons.append(
+            Button(rect_again, "Back to Menu", self.font_button, callback=self._on_back_to_menu)
+        )
+
+    def _on_back_to_menu(self):
+        from .menu_main import MainMenuScene
+        if self.client.connected:
+            self.client.close()
+        self.app.change_scene(MainMenuScene)
+
+    # ---------- Networking ----------
+
+    def _handle_server_message(self, msg: Dict[str, Any]) -> None:
+        mtype = msg.get("type")
+        if mtype == "state":
+            fen = msg.get("fen")
+            if isinstance(fen, str):
+                self.board.import_fen(fen)
+
+            self.last_move_squares = []
+            last_uci = msg.get("last_move")
+            if isinstance(last_uci, str):
+                (sf, sr), (tf, tr) = self._uci_to_from_to(last_uci)
+                self.last_move_squares = [(sf, sr), (tf, tr)]
+
+            turn = msg.get("turn", "white")
+
+            # ====== CLOCK: lấy từ server ======
+            tw = msg.get("time_white")
+            tb = msg.get("time_black")
+            if isinstance(tw, (int, float)):
+                self._server_white_time = float(tw)
+            if isinstance(tb, (int, float)):
+                self._server_black_time = float(tb)
+            self._last_clock_sync = pygame.time.get_ticks() / 1000.0
+
+            self.white_time_sec = self._server_white_time
+            self.black_time_sec = self._server_black_time
+
+            self.status_text = f"Your color: {self.player_color} | Turn: {turn}"
+
+            result = msg.get("result", "ongoing")
+            self._update_game_status_from_server(result)
+
+            # Cập nhật legal moves client-side (chỉ để highlight)
+            self.legal_moves_uci = generate_legal_moves(self.board)
+
+        elif mtype == "move_rejected":
+            reason = msg.get("reason", "unknown")
+            self.status_text = f"Move rejected: {reason}"
+
+        elif mtype == "error":
+            self.status_text = f"Error: {msg.get('message', 'unknown')}"
+
+    def _update_from_network(self) -> None:
+        if not self.client.connected:
+            self.status_text = "Disconnected"
+            return
+        for msg in self.client.poll_messages():
+            self._handle_server_message(msg)
+
+    def _is_player_turn(self) -> bool:
+        # Dựa trên state board: turn_white
+        if self.game_result != "ongoing":
+            return False
+        board_turn = "white" if self.board.turn_white else "black"
+        return board_turn == self.player_color
+
+    def _send_move(self, uci: str) -> None:
+        if not self.client.connected:
+            self.status_text = "Disconnected"
+            return
+        if not self._is_player_turn():
+            self.status_text = "Not your turn"
+            return
+        try:
+            self.client.send_message({"type": "move", "uci": uci})
+        except Exception:
+            self.status_text = "Failed to send move"
+
+    # ---------- Event handling ----------
+
+    def handle_events(self, events: List[pygame.event.Event]):
+        if self.promotion_active and not self.game_over:
+            self._handle_promotion_events(events)
+            return
+
+        if self.game_over:
+            for event in events:
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    self._on_back_to_menu()
+                for btn in self.game_over_buttons:
+                    btn.handle_event(event)
+            return
+
+        for event in events:
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    self._on_back_to_menu()
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                self._handle_left_click(event.pos)
+
+    def _handle_promotion_events(self, events: List[pygame.event.Event]):
+        for event in events:
+            if event.type == pygame.KEYDOWN:
+                key_map = {
+                    pygame.K_q: "Q",
+                    pygame.K_r: "R",
+                    pygame.K_b: "B",
+                    pygame.K_n: "N",
+                }
+                if event.key in key_map:
+                    self._on_promotion_choice(key_map[event.key])
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                for btn in self.promotion_buttons:
+                    btn.handle_event(event)
+
+    def _handle_left_click(self, pos: Tuple[int, int]):
+        if not self._is_player_turn():
+            return
+
+        sq = pixel_to_board_square(*pos)
+        if sq is None:
+            self.selected_square = None
+            self.highlight_squares = []
+            return
+
+        file, rank = sq
+        piece_symbol = self.board.piece_symbol_at(file, rank)
+
+        if self.selected_square is None:
+            if not piece_symbol:
+                return
+
+            is_white_piece = piece_symbol.isupper()
+            if (is_white_piece and self.player_color != "white") or (
+                not is_white_piece and self.player_color != "black"
+            ):
+                return
+
+            if (self.player_color == "white" and not self.board.turn_white) or (
+                self.player_color == "black" and self.board.turn_white
+            ):
+                return
+
+            self.selected_square = (file, rank)
+            moves_from = self._legal_moves_from_square(file, rank)
+            dest_squares: List[Tuple[int, int]] = []
+            for uci in moves_from:
+                _, (tf, tr) = self._uci_to_from_to(uci)
+                dest_squares.append((tf, tr))
+            self.highlight_squares = dest_squares
+        else:
+            src_file, src_rank = self.selected_square
+
+            if (file, rank) == (src_file, src_rank):
+                self.selected_square = None
+                self.highlight_squares = []
+                return
+
+            candidate_moves = self._legal_moves_from_square(src_file, src_rank)
+
+            promotion_moves: List[str] = []
+            normal_move: Optional[str] = None
+
+            for uci in candidate_moves:
+                (_, _), (tf, tr) = self._uci_to_from_to(uci)
+                if tf == file and tr == rank:
+                    if len(uci) == 5:
+                        promotion_moves.append(uci)
+                    else:
+                        normal_move = uci
+
+            if promotion_moves:
+                self._start_promotion_choice(promotion_moves)
+                return
+
+            if normal_move is None:
+                self.selected_square = None
+                self.highlight_squares = []
+                return
+
+            # Gửi move lên server
+            self._send_move(normal_move)
+
+            # Reset chọn ô (board sẽ update khi state mới tới)
+            self.selected_square = None
+            self.highlight_squares = []
+
+    # ---------- Update & Render ----------
+
+    def update(self, dt: float):
+        self._update_from_network()
+        # Không chạy đồng hồ local (server chưa hỗ trợ), time panel chỉ để tham khảo
+         # nội suy clock để đếm ngược từng giây trên client
+        if self.game_result != "ongoing":
+            return  # game over thì không cần chạy clock nữa
+
+        now = pygame.time.get_ticks() / 1000.0
+        elapsed = max(0.0, now - self._last_clock_sync)
+
+        # lượt hiện tại dựa trên board
+        turn_color = "white" if self.board.turn_white else "black"
+
+        if turn_color == "white":
+            self.white_time_sec = max(self._server_white_time - elapsed, 0.0)
+            self.black_time_sec = self._server_black_time
+        else:
+            self.black_time_sec = max(self._server_black_time - elapsed, 0.0)
+            self.white_time_sec = self._server_white_time
+
+    def render(self, surface: pygame.Surface):
+        surface.fill(COLOR_BG)
+
+        # GỌI Y HỆT LOCAL, CHỈ KHÁC LÀ capture_squares = []
+        draw_board(
+            surface,
+            self.selected_square,      # selected_square
+            self.highlight_squares,    # move_squares
+            [],                        # capture_squares (online chưa tách riêng, để trống)
+            self.last_move_squares,    # last_move_squares (đã set từ server)
+        )
+
+        draw_pieces(surface, self.board, self.font_piece)
+
+        draw_hud(
+            surface,
+            self.board,
+            self.font_hud,
+            self.status_text,
+            game_over=self.game_over,
+            game_result=self.game_result,
+        )
+
+        draw_side_panels(
+            surface,
+            self.font_hud,
+            self.white_time_sec,
+            self.black_time_sec,
+            self.ply_count,
+            self.board.turn_white,
+            self.status_text,
+        )
+
+        if self.game_over:
+            self._render_game_over_overlay(surface)
+        elif self.promotion_active:
+            self._render_promotion_popup(surface)
+
+
+    # ---------- Overlays ----------
+
+    def _render_promotion_popup(self, surface: pygame.Surface):
+        overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 160))
+        surface.blit(overlay, (0, 0))
+
+        text = "Choose promotion: Q / R / B / N"
+        text_surf = self.font_hud.render(text, True, COLOR_TEXT)
+        text_rect = text_surf.get_rect(
+            center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - int(TILE_SIZE * 0.6))
+        )
+        surface.blit(text_surf, text_rect)
+
+        for btn in self.promotion_buttons:
+            btn.draw(surface)
+
+    def _render_game_over_overlay(self, surface: pygame.Surface):
+        overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        surface.blit(overlay, (0, 0))
+
+        if self.game_result == "white_win":
+            title = "WHITE WINS!"
+        elif self.game_result == "black_win":
+            title = "BLACK WINS!"
+        elif self.game_result == "draw":
+            title = "DRAW"
+        else:
+            title = "GAME OVER"
+
+        title_surf = self.font_title_big.render(title, True, COLOR_TEXT)
+        title_rect = title_surf.get_rect(
+            center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - int(TILE_SIZE * 1.2))
+        )
+        surface.blit(title_surf, title_rect)
+
+        if self.game_over_reason:
+            reason_surf = self.font_title_small.render(self.game_over_reason, True, COLOR_TEXT)
+            reason_rect = reason_surf.get_rect(
+                center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - int(TILE_SIZE * 0.4))
+            )
+            surface.blit(reason_surf, reason_rect)
+
+        for btn in self.game_over_buttons:
+            btn.draw(surface)
+
+File game_vs_ai.py
+# game/scenes/game_vs_ai.py
+import pygame
+from typing import Dict, Any
+
+from .game_local import GameLocalScene
+from game.ai_hook import choose_move_for_game
+
+
+class GameVsAIScene(GameLocalScene):
+    """
+    Scene chơi Người vs AI.
+    - Tái sử dụng gần như toàn bộ logic của GameLocalScene.
+    - Thêm lượt đi tự động cho phía AI bằng ai_hook.choose_move_for_game().
+    """
+
+    def __init__(
+        self,
+        app,
+        human_white: bool = True,
+        agent_spec: Dict[str, Any] | None = None,
+    ):
+        super().__init__(app, mode="pve")
+        self.human_white = human_white
+        self.agent_spec: Dict[str, Any] = agent_spec or {
+            "type": "minimax",
+            "level": "easy",
+        }
+
+        # AI state
+        self._waiting_for_ai_move: bool = False
+        self._ai_think_delay_sec: float = 0.2  # trễ nhẹ cho dễ nhìn
+        self._ai_timer: float = 0.0
+
+        # Xem có cần cho AI đi trước không (nếu người chơi là Đen)
+        self._schedule_ai_if_needed()
+
+    # ---------- Helpers ----------
+
+    def _is_in_replay_mode(self) -> bool:
+        """Kiểm tra xem có đang ở chế độ replay không"""
+        return getattr(self, 'replay_mode', False)
+
+    def _schedule_ai_if_needed(self):
+        """
+        Kiểm tra xem lượt hiện tại là của AI hay không.
+        Nếu phải của AI => bật cờ _waiting_for_ai_move.
+        """
+        if self.game_over or self.promotion_active:
+            self._waiting_for_ai_move = False
+            return
+
+        # QUAN TRỌNG: Không schedule AI khi đang replay
+        if self._is_in_replay_mode():
+            self._waiting_for_ai_move = False
+            return
+
+        is_human_turn = (self.board.turn_white == self.human_white)
+        self._waiting_for_ai_move = not is_human_turn
+        
+        # Reset timer khi schedule AI mới
+        if self._waiting_for_ai_move:
+            self._ai_timer = 0.0
+
+    # Ghi đè hàm áp dụng nước đi để sau mỗi nước
+    # sẽ gọi _schedule_ai_if_needed().
+    def _apply_move_and_update_state(self, uci: str) -> bool:
+        success = super()._apply_move_and_update_state(uci)
+        if success:
+            self._schedule_ai_if_needed()
+        return success
+
+    # ---------- Override reset/replay methods ----------
+    
+    def reset_game(self):
+        """Override để reset cả AI state khi reset game"""
+        super().reset_game()
+        self._waiting_for_ai_move = False
+        self._ai_timer = 0.0
+        
+        # Đảm bảo tắt replay mode
+        if hasattr(self, 'replay_mode'):
+            self.replay_mode = False
+        
+        # Sau khi reset, check xem có phải lượt AI không
+        self._schedule_ai_if_needed()
+    
+    def _on_play_again(self):
+        """
+        QUAN TRỌNG: Override để tạo lại GameVsAIScene thay vì GameLocalScene
+        """
+        # Tạo lại scene với cùng config
+        self.app.change_scene(
+            GameVsAIScene, 
+            human_white=self.human_white,
+            agent_spec=self.agent_spec
+        )
+    
+    def enter_replay_mode(self):
+        """Khi vào chế độ replay, tắt AI"""
+        if hasattr(super(), 'enter_replay_mode'):
+            super().enter_replay_mode()
+        
+        self.replay_mode = True
+        self._waiting_for_ai_move = False
+        self._ai_timer = 0.0
+    
+    def exit_replay_mode(self):
+        """Override để đảm bảo AI được kích hoạt lại sau replay"""
+        # Gọi parent method nếu có
+        if hasattr(super(), 'exit_replay_mode'):
+            super().exit_replay_mode()
+        
+        # Tắt replay mode
+        self.replay_mode = False
+        
+        # Reset AI state
+        self._waiting_for_ai_move = False
+        self._ai_timer = 0.0
+        
+        # QUAN TRỌNG: Schedule AI sau khi thoát replay
+        self._schedule_ai_if_needed()
+
+    # ---------- Vòng lặp ----------
+
+    def update(self, dt: float):
+        # Cập nhật đồng hồ như GameLocalScene (hết giờ vẫn thua)
+        super().update(dt)
+
+        # QUAN TRỌNG: Không cho AI chạy khi đang replay
+        if self._is_in_replay_mode():
+            self._waiting_for_ai_move = False
+            return
+
+        if self.game_over or self.promotion_active:
+            self._waiting_for_ai_move = False
+            return
+
+        if not self._waiting_for_ai_move:
+            return
+
+        # Đợi một khoảng nhỏ để nhìn cho kịp
+        self._ai_timer += dt
+        if self._ai_timer < self._ai_think_delay_sec:
+            return
+        self._ai_timer = 0.0
+
+        # Gọi AI
+        try:
+            uci, _info = choose_move_for_game(self.board, self.agent_spec)
+        except NotImplementedError:
+            # TEAM AI chưa implement => báo trạng thái và dừng gọi AI nữa
+            self.status_text = "AI chưa được implement (TEAM AI sẽ viết choose_move_for_game)."
+            self._waiting_for_ai_move = False
+            return
+        except Exception as e:
+            self.status_text = f"Lỗi AI: {e}"
+            self._waiting_for_ai_move = False
+            return
+
+        # Kiểm tra nước đi AI trả về có hợp lệ không
+        if uci not in self.legal_moves_uci:
+            self.status_text = "AI trả về nước đi không hợp lệ."
+            self._waiting_for_ai_move = False
+            return
+
+        # Clear highlight của người chơi
+        self.selected_square = None
+        self.highlight_squares = []
+
+        # Áp dụng nước đi của AI
+        self._apply_move_and_update_state(uci)
+    
+    def handle_events(self, events):
+        """Override để đảm bảo events được xử lý đúng sau replay"""
+        super().handle_events(events)
+        
+        # QUAN TRỌNG: Không schedule AI khi đang replay
+        if self._is_in_replay_mode():
+            self._waiting_for_ai_move = False
+            return
+        
+        # Sau khi xử lý events, check lại AI nếu cần
+        if not self.game_over and not self.promotion_active:
+            # Chỉ schedule lại nếu chưa đang chờ AI
+            if not self._waiting_for_ai_move:
+                self._schedule_ai_if_needed()
+
 File init.py
 # game/scenes/__init__.py
 
@@ -1839,10 +4028,18 @@ from typing import List
 from .base import SceneBase
 from game.ui.widgets import Button
 from game.config import SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG, COLOR_TEXT
-from .game_local import GameLocalScene
 
 
 class MainMenuScene(SceneBase):
+    """
+    Menu chính:
+    - Play      -> vào menu chọn chế độ chơi
+    - Simulator -> AI vs AI
+    - Setting   -> màn hình cài đặt (stub)
+    - Credit    -> credit
+    - Exit      -> thoát game
+    """
+
     def __init__(self, app):
         super().__init__(app)
 
@@ -1854,22 +4051,60 @@ class MainMenuScene(SceneBase):
         btn_width = 260
         btn_height = 50
         center_x = SCREEN_WIDTH // 2
-        start_y = SCREEN_HEIGHT // 2 - 40
+        start_y = SCREEN_HEIGHT // 2 - 80
         gap = 60
 
+        # Play
         rect_play = pygame.Rect(0, 0, btn_width, btn_height)
         rect_play.center = (center_x, start_y)
         self.buttons.append(
             Button(
                 rect_play,
-                "Play (Two Player)",
+                "Play",
                 self.font_button,
-                callback=self._on_play_two_player,
+                callback=self._on_play,
             )
         )
 
+        # Simulator
+        rect_sim = pygame.Rect(0, 0, btn_width, btn_height)
+        rect_sim.center = (center_x, start_y + gap)
+        self.buttons.append(
+            Button(
+                rect_sim,
+                "Simulator",
+                self.font_button,
+                callback=self._on_simulator,
+            )
+        )
+
+        # Setting
+        rect_setting = pygame.Rect(0, 0, btn_width, btn_height)
+        rect_setting.center = (center_x, start_y + 2 * gap)
+        self.buttons.append(
+            Button(
+                rect_setting,
+                "Setting",
+                self.font_button,
+                callback=self._on_setting,
+            )
+        )
+
+        # Credit
+        rect_credit = pygame.Rect(0, 0, btn_width, btn_height)
+        rect_credit.center = (center_x, start_y + 3 * gap)
+        self.buttons.append(
+            Button(
+                rect_credit,
+                "Credit",
+                self.font_button,
+                callback=self._on_credit,
+            )
+        )
+
+        # Exit
         rect_exit = pygame.Rect(0, 0, btn_width, btn_height)
-        rect_exit.center = (center_x, start_y + gap)
+        rect_exit.center = (center_x, start_y + 4 * gap)
         self.buttons.append(
             Button(
                 rect_exit,
@@ -1879,11 +4114,36 @@ class MainMenuScene(SceneBase):
             )
         )
 
-    def _on_play_two_player(self):
-        self.app.change_scene(GameLocalScene, mode="pvp")
+    # ---------- Callbacks ----------
+
+    def _on_play(self):
+        from .menu_play import PlayMenuScene
+        self.app.change_scene(PlayMenuScene)
+
+    def _on_simulator(self):
+        from .simulator import SimulatorScene
+        
+        white_agent = {"type": "minimax", "level": "hard", "side": "white"}
+        black_agent = {"type": "random", "level": "easy", "side": "black"}
+
+        self.app.change_scene(
+            SimulatorScene,
+            white_agent_spec=white_agent,
+            black_agent_spec=black_agent,
+        )
+
+    def _on_setting(self):
+        from .settings import SettingsScene
+        self.app.change_scene(SettingsScene)
+
+    def _on_credit(self):
+        from .credits import CreditsScene
+        self.app.change_scene(CreditsScene)
 
     def _on_exit(self):
         self.app.quit()
+
+    # ---------- SceneBase override ----------
 
     def handle_events(self, events):
         for event in events:
@@ -1902,6 +4162,602 @@ class MainMenuScene(SceneBase):
 
         for btn in self.buttons:
             btn.draw(surface)
+
+File menu_play.py
+# game/scenes/menu_play.py
+import pygame
+from typing import List
+
+from .base import SceneBase
+from game.ui.widgets import Button
+from game.config import SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG, COLOR_TEXT
+
+
+class PlayMenuScene(SceneBase):
+    """
+    Menu Play:
+    - Play with AI
+    - Play Online
+    - Two Player (Local)
+    - Back
+    """
+
+    def __init__(self, app):
+        super().__init__(app)
+
+        self.font_title = pygame.font.Font(None, 64)
+        self.font_button = pygame.font.Font(None, 36)
+
+        self.buttons: List[Button] = []
+
+        btn_width = 320
+        btn_height = 50
+        center_x = SCREEN_WIDTH // 2
+        start_y = SCREEN_HEIGHT // 2 - 60
+        gap = 60
+
+        # Play with AI
+        rect_ai = pygame.Rect(0, 0, btn_width, btn_height)
+        rect_ai.center = (center_x, start_y)
+        self.buttons.append(
+            Button(
+                rect_ai,
+                "Play with AI",
+                self.font_button,
+                callback=self._on_play_with_ai,
+            )
+        )
+
+        # Play Online
+        rect_online = pygame.Rect(0, 0, btn_width, btn_height)
+        rect_online.center = (center_x, start_y + gap)
+        self.buttons.append(
+            Button(
+                rect_online,
+                "Play Online",
+                self.font_button,
+                callback=self._on_play_online,
+            )
+        )
+
+        # Two Player (local)
+        rect_pvp = pygame.Rect(0, 0, btn_width, btn_height)
+        rect_pvp.center = (center_x, start_y + 2 * gap)
+        self.buttons.append(
+            Button(
+                rect_pvp,
+                "Two Player (Local)",
+                self.font_button,
+                callback=self._on_two_player_local,
+            )
+        )
+
+        # Back
+        rect_back = pygame.Rect(0, 0, btn_width, btn_height)
+        rect_back.center = (center_x, start_y + 3 * gap)
+        self.buttons.append(
+            Button(
+                rect_back,
+                "Back",
+                self.font_button,
+                callback=self._on_back,
+            )
+        )
+
+    # ---------- Callbacks ----------
+
+    def _on_play_with_ai(self):
+        from .ai_selection import AISelectionScene
+        self.app.change_scene(AISelectionScene, human_white=True)
+
+    def _on_play_online(self):
+        from .online_menu import OnlineMenuScene
+        self.app.change_scene(OnlineMenuScene)
+
+    def _on_two_player_local(self):
+        from .game_local import GameLocalScene
+        self.app.change_scene(GameLocalScene, mode="pvp")
+
+    def _on_back(self):
+        from .menu_main import MainMenuScene
+        self.app.change_scene(MainMenuScene)
+
+    # ---------- SceneBase override ----------
+
+    def handle_events(self, events):
+        for event in events:
+            for btn in self.buttons:
+                btn.handle_event(event)
+
+    def update(self, dt: float):
+        pass
+
+    def render(self, surface: pygame.Surface):
+        surface.fill(COLOR_BG)
+
+        title_surf = self.font_title.render("Play", True, COLOR_TEXT)
+        title_rect = title_surf.get_rect(center=(SCREEN_WIDTH // 2, 120))
+        surface.blit(title_surf, title_rect)
+
+        for btn in self.buttons:
+            btn.draw(surface)
+
+File online_menu.py
+
+# filepath: c:\Users\Win 10\Desktop\Update Machine learning\Chess_AI_Project\game\scenes\online_menu.py
+# game/scenes/online_menu.py
+import pygame
+from typing import List, Optional
+
+from .base import SceneBase
+from game.ui.widgets import Button
+from game.config import (
+    SCREEN_WIDTH,
+    SCREEN_HEIGHT,
+    COLOR_BG,
+    COLOR_TEXT,
+    ONLINE_SERVER_HOST,
+    ONLINE_SERVER_PORT,
+)
+from game.network_client import NetworkClient
+from .game_online import GameOnlineScene
+
+
+class OnlineMenuScene(SceneBase):
+    """
+    Menu Play Online.
+    - Host Game       : tạo phòng mới trên server mặc định trong config
+    - Refresh Rooms   : lấy danh sách phòng hiện tại
+    - Danh sách room  : click vào để join phòng
+    - Back
+    """
+
+    def __init__(self, app):
+        super().__init__(app)
+
+        self.font_title = pygame.font.Font(None, 64)
+        self.font_button = pygame.font.Font(None, 36)
+        self.font_info = pygame.font.Font(None, 24)
+
+        self.buttons_static: List[Button] = []
+        self.buttons_rooms: List[Button] = []  # mỗi room là 1 button
+
+        btn_width = 220
+        btn_height = 45
+        center_x = SCREEN_WIDTH // 2
+        start_y = 160
+        gap = 55
+
+        # Host
+        rect_host = pygame.Rect(0, 0, btn_width, btn_height)
+        rect_host.center = (center_x, start_y)
+        self.buttons_static.append(
+            Button(
+                rect_host,
+                "Host Game",
+                self.font_button,
+                callback=self._on_host,
+            )
+        )
+
+        # Refresh Rooms
+        rect_refresh = pygame.Rect(0, 0, btn_width, btn_height)
+        rect_refresh.center = (center_x, start_y + gap)
+        self.buttons_static.append(
+            Button(
+                rect_refresh,
+                "Refresh Rooms",
+                self.font_button,
+                callback=self._on_refresh_rooms,
+            )
+        )
+
+        # Back
+        rect_back = pygame.Rect(0, 0, btn_width, btn_height)
+        rect_back.center = (center_x, start_y + 2 * gap)
+        self.buttons_static.append(
+            Button(
+                rect_back,
+                "Back",
+                self.font_button,
+                callback=self._on_back,
+            )
+        )
+
+        self.info_text = f"Server: {ONLINE_SERVER_HOST}:{ONLINE_SERVER_PORT}"
+        self.rooms: List[dict] = []  # từ server: [{"room_id":..., "players":..., "started":...}, ...]
+
+    # ---------- Internal helpers ----------
+
+    def _connect_once(self) -> Optional[NetworkClient]:
+        """
+        Tạo connection dùng tạm trong menu (host/list/join).
+        Mỗi lần gọi tạo mới, xong việc thì hoặc đóng hoặc chuyển qua GameOnlineScene.
+        """
+        client = NetworkClient()
+        try:
+            client.connect(ONLINE_SERVER_HOST, ONLINE_SERVER_PORT)
+        except Exception as e:
+            self.info_text = f"Connect failed: {e}"
+            return None
+        return client
+
+    def _wait_for_message(
+        self,
+        client: NetworkClient,
+        target_types: list[str],
+        timeout: float = 3.0,
+    ) -> Optional[dict]:
+        """
+        Chờ tới khi nhận được 1 message có type trong target_types, hoặc timeout.
+        """
+        import time
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            msgs = client.poll_messages()
+            for m in msgs:
+                if m.get("type") in target_types:
+                    return m
+            time.sleep(0.05)
+        return None
+
+    # ---------- Callbacks ----------
+
+    def _on_host(self):
+        """
+        Tạo phòng mới trên server, vào thẳng game online.
+        """
+        client = self._connect_once()
+        if client is None:
+            return
+
+        client.send_message({"type": "join", "game_id": None})
+
+        msg = self._wait_for_message(client, ["joined"])
+        if msg is None:
+            self.info_text = "Host failed (no response)"
+            client.close()
+            return
+
+        room_id = msg.get("room_id")
+        color = msg.get("color")
+        if not isinstance(room_id, str) or color not in ("white", "black"):
+            self.info_text = "Host failed (invalid response)"
+            client.close()
+            return
+
+        self.info_text = f"Hosted room {room_id} as {color}"
+
+        # Chuyển sang GameOnlineScene, giữ client để chơi
+        self.app.change_scene(
+            GameOnlineScene,
+            network_client=client,
+            room_id=room_id,
+            player_color=color,
+        )
+
+    def _on_refresh_rooms(self):
+        """
+        Lấy danh sách phòng từ server, hiển thị thành list button.
+        """
+        client = self._connect_once()
+        if client is None:
+            return
+
+        client.send_message({"type": "list_rooms"})
+
+        msg = self._wait_for_message(client, ["rooms"])
+        client.close()
+
+        if msg is None:
+            self.info_text = "Failed to fetch rooms"
+            return
+
+        rooms = msg.get("rooms")
+        if not isinstance(rooms, list):
+            self.info_text = "Invalid rooms response"
+            return
+
+        # Lưu rooms, filter phòng đã full (players >= 2)
+        self.rooms = [
+            r for r in rooms
+            if isinstance(r, dict) and isinstance(r.get("room_id"), str)
+        ]
+
+        if not self.rooms:
+            self.info_text = "No rooms available"
+        else:
+            self.info_text = f"{len(self.rooms)} room(s) found"
+
+        self._rebuild_room_buttons()
+
+    def _rebuild_room_buttons(self):
+        """
+        Tạo lại các Button tương ứng với self.rooms.
+        """
+        self.buttons_rooms.clear()
+
+        if not self.rooms:
+            return
+
+        # Bắt đầu vẽ list từ y cố định
+        start_y = 340
+        gap_y = 45
+        x = SCREEN_WIDTH // 2
+
+        for idx, r in enumerate(self.rooms):
+            room_id = r.get("room_id")
+            players = r.get("players", 0)
+            started = r.get("started", False)
+
+            # Text hiển thị: "room_id | 1/2 | waiting/playing"
+            status = "playing" if started else "waiting"
+            label = f"{room_id} | {players}/2 | {status}"
+
+            rect = pygame.Rect(0, 0, 420, 36)
+            rect.center = (x, start_y + idx * gap_y)
+
+            # callback join room này
+            def make_callback(rid=room_id):
+                return lambda: self._on_join_room(rid)
+
+            btn = Button(rect, label, self.font_info, callback=make_callback())
+            self.buttons_rooms.append(btn)
+
+    def _on_join_room(self, room_id: str):
+        """
+        Join vào room được click từ list.
+        """
+        client = self._connect_once()
+        if client is None:
+            return
+
+        client.send_message({"type": "join", "game_id": room_id})
+
+        msg = self._wait_for_message(client, ["joined", "join_failed"])
+        if msg is None:
+            self.info_text = "Join failed (no response)"
+            client.close()
+            return
+
+        if msg.get("type") == "join_failed":
+            self.info_text = f"Join failed: {msg.get('reason', 'unknown')}"
+            client.close()
+            return
+
+        color = msg.get("color")
+        if color not in ("white", "black"):
+            self.info_text = "Join failed (invalid response)"
+            client.close()
+            return
+
+        self.info_text = f"Joined room {room_id} as {color}"
+
+        self.app.change_scene(
+            GameOnlineScene,
+            network_client=client,
+            room_id=room_id,
+            player_color=color,
+        )
+
+    def _on_back(self):
+        from .menu_play import PlayMenuScene
+        self.app.change_scene(PlayMenuScene)
+
+    # ---------- SceneBase override ----------
+
+    def handle_events(self, events):
+        for event in events:
+            for btn in self.buttons_static:
+                btn.handle_event(event)
+            for btn in self.buttons_rooms:
+                btn.handle_event(event)
+
+    def update(self, dt: float):
+        pass
+
+    def render(self, surface: pygame.Surface):
+        surface.fill(COLOR_BG)
+
+        # Title
+        title_surf = self.font_title.render("Play Online", True, COLOR_TEXT)
+        title_rect = title_surf.get_rect(center=(SCREEN_WIDTH // 2, 80))
+        surface.blit(title_surf, title_rect)
+
+        # Info
+        if self.info_text:
+            info_surf = self.font_info.render(self.info_text, True, COLOR_TEXT)
+            info_rect = info_surf.get_rect(center=(SCREEN_WIDTH // 2, 130))
+            surface.blit(info_surf, info_rect)
+
+        # Buttons (Host / Refresh / Back)
+        for btn in self.buttons_static:
+            btn.draw(surface)
+
+        # List rooms
+        if self.rooms:
+            list_title = self.font_info.render("Available Rooms:", True, COLOR_TEXT)
+            list_rect = list_title.get_rect(center=(SCREEN_WIDTH // 2, 300))
+            surface.blit(list_title, list_rect)
+
+            for btn in self.buttons_rooms:
+                btn.draw(surface)
+
+File settings.py
+# game/scenes/settings.py
+import pygame
+from typing import List
+
+from .base import SceneBase
+from game.ui.widgets import Button
+from game.config import SCREEN_WIDTH, SCREEN_HEIGHT, COLOR_BG, COLOR_TEXT
+
+
+class SettingsScene(SceneBase):
+    """
+    Màn hình Setting (stub).
+    Hiện tại chỉ hiển thị vài setting mẫu, chưa lưu/chỉnh thật.
+    """
+
+    def __init__(self, app):
+        super().__init__(app)
+
+        self.font_title = pygame.font.Font(None, 64)
+        self.font_item = pygame.font.Font(None, 32)
+        self.font_button = pygame.font.Font(None, 36)
+
+        self.buttons: List[Button] = []
+
+        btn_width = 220
+        btn_height = 50
+        center_x = SCREEN_WIDTH // 2
+        start_y = SCREEN_HEIGHT // 2 + 80
+
+        rect_back = pygame.Rect(0, 0, btn_width, btn_height)
+        rect_back.center = (center_x, start_y)
+        self.buttons.append(
+            Button(
+                rect_back,
+                "Back",
+                self.font_button,
+                callback=self._on_back,
+            )
+        )
+
+        # Các dòng setting minh hoạ (sau này map vào config thật)
+        self.dummy_items = [
+            "- Board theme: Classic",
+            "- Sound: On",
+            "- Time limit: 5 minutes",
+        ]
+
+    def _on_back(self):
+        from .menu_main import MainMenuScene
+        self.app.change_scene(MainMenuScene)
+
+    def handle_events(self, events):
+        for event in events:
+            for btn in self.buttons:
+                btn.handle_event(event)
+
+    def update(self, dt: float):
+        pass
+
+    def render(self, surface: pygame.Surface):
+        surface.fill(COLOR_BG)
+
+        title_surf = self.font_title.render("Settings", True, COLOR_TEXT)
+        title_rect = title_surf.get_rect(center=(SCREEN_WIDTH // 2, 120))
+        surface.blit(title_surf, title_rect)
+
+        y = 200
+        for item in self.dummy_items:
+            item_surf = self.font_item.render(item, True, COLOR_TEXT)
+            item_rect = item_surf.get_rect(center=(SCREEN_WIDTH // 2, y))
+            surface.blit(item_surf, item_rect)
+            y += 40
+
+        for btn in self.buttons:
+            btn.draw(surface)
+
+File simulator.py
+# game/scenes/simulator.py
+import pygame
+from typing import Dict, Any
+
+from .game_local import GameLocalScene
+from game.ai_hook import choose_move_for_game
+
+
+class SimulatorScene(GameLocalScene):
+    """
+    Scene Simulator: AI vs AI.
+    Dùng để team AI test các agent hoặc làm demo tự chạy.
+    """
+
+    def __init__(
+        self,
+        app,
+        white_agent_spec: Dict[str, Any] | None = None,
+        black_agent_spec: Dict[str, Any] | None = None,
+        move_delay_sec: float = 0.2,
+    ):
+        super().__init__(app, mode="sim")
+
+        self.white_agent_spec = white_agent_spec or {
+            "type": "minimax",
+            "level": "hard",
+            "side": "white",
+        }
+        self.black_agent_spec = black_agent_spec or {
+            "type": "random",
+            "level": "easy",
+            "side": "black",
+        }
+
+        self._ai_delay_sec = move_delay_sec
+        self._ai_timer = 0.0
+
+        self.status_text = "Simulator: AI vs AI"
+
+    # ---------- Events ----------
+
+    def handle_events(self, events):
+        # Simulator chỉ cần ESC để quay lại menu
+        for event in events:
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                from .menu_main import MainMenuScene
+                self.app.change_scene(MainMenuScene)
+
+    # ---------- Update ----------
+
+    def update(self, dt: float):
+        if self.game_over or self.promotion_active:
+            return
+
+        # Không gọi super().update(dt) để tránh hết giờ
+        self._ai_timer += dt
+        if self._ai_timer < self._ai_delay_sec:
+            return
+        self._ai_timer = 0.0
+
+        # Chọn agent theo bên đang đi
+        if self.board.turn_white:
+            spec = self.white_agent_spec
+        else:
+            spec = self.black_agent_spec
+
+        # Gọi AI
+        try:
+            uci, _info = choose_move_for_game(self.board, spec)
+        except NotImplementedError:
+            self.status_text = "AI chưa được implement (TEAM AI). Simulator dừng lại."
+            self.game_over = True
+            self.game_over_reason = "AI Not Implemented"
+            return
+        except Exception as e:
+            self.status_text = f"Lỗi AI: {e}"
+            self.game_over = True
+            self.game_over_reason = "AI Error"
+            return
+
+        if uci not in self.legal_moves_uci:
+            self.status_text = "AI trả về nước đi không hợp lệ. Simulator dừng."
+            self.game_over = True
+            self.game_over_reason = "Illegal move"
+            return
+
+        self.selected_square = None
+        self.highlight_squares = []
+
+        self._apply_move_and_update_state(uci)
+
+    # ---------- Render ----------
+
+    def render(self, surface: pygame.Surface):
+        # Dùng lại render của GameLocalScene (bàn + panel + overlay)
+        super().render(surface)
 
 
 Folder game/ui
@@ -1960,11 +4816,12 @@ File run_game.py
 import pygame
 from game.app import GameApp
 from game.scenes.menu_main import MainMenuScene
+from game.config import WINDOW_TITLE
 
 
 def main():
     pygame.init()
-    pygame.display.set_caption("Chess_AI_Project")
+    pygame.display.set_caption(WINDOW_TITLE)
 
     app = GameApp(initial_scene_cls=MainMenuScene)
     app.run()
@@ -1974,5 +4831,427 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+Folder server
+File main.py
+import socket
+import threading
+import json
+import uuid
+import time
+from typing import Dict, Optional
+
+# Import core chess logic
+from core.board import Board
+from core.rules import generate_legal_moves, get_game_result
+
+HOST = "0.0.0.0"
+PORT = 5000
+
+
+class GameRoom:
+    """
+    Một phòng cờ vua cho tối đa 2 người chơi.
+    Server giữ Board là source of truth.
+    """
+
+    def __init__(self, room_id: str):
+        self.room_id = room_id
+        self.lock = threading.Lock()
+        self.white_conn: Optional[socket.socket] = None
+        self.black_conn: Optional[socket.socket] = None
+
+        # Chess board & state
+        self.board: Optional[Board] = None
+        self.started: bool = False
+
+        # Clock (seconds)
+        self.initial_time_sec: float = 300.0  # 5 phút, tuỳ bạn chỉnh
+        self.white_time_left: float = self.initial_time_sec
+        self.black_time_left: float = self.initial_time_sec
+        self.last_update_ts: float = time.time()
+        
+    def add_player(self, conn: socket.socket) -> Optional[str]:
+        """
+        Thêm player vào phòng.
+        Trả về 'white' hoặc 'black' nếu join thành công, None nếu phòng đã full.
+        """
+        with self.lock:
+            if self.white_conn is None:
+                self.white_conn = conn
+                return "white"
+            elif self.black_conn is None:
+                self.black_conn = conn
+                return "black"
+            else:
+                return None
+
+    def other_conn(self, conn: socket.socket) -> Optional[socket.socket]:
+        with self.lock:
+            if conn is self.white_conn:
+                return self.black_conn
+            if conn is self.black_conn:
+                return self.white_conn
+            return None
+
+    def remove_conn(self, conn: socket.socket):
+        with self.lock:
+            if conn is self.white_conn:
+                self.white_conn = None
+            elif conn is self.black_conn:
+                self.black_conn = None
+
+    def is_empty(self) -> bool:
+        with self.lock:
+            return self.white_conn is None and self.black_conn is None
+
+    def is_full(self) -> bool:
+        with self.lock:
+            return self.white_conn is not None and self.black_conn is not None
+        
+    def player_count(self) -> int:
+        with self.lock:
+            c = 0
+            if self.white_conn is not None:
+                c += 1
+            if self.black_conn is not None:
+                c += 1
+            return c
+
+    # ----- Chess-specific helpers -----
+
+    def ensure_started(self):
+        """
+        Khởi tạo board khi phòng đã đủ 2 người mà chưa start.
+        """
+        with self.lock:
+            if not self.started:
+                self.board = Board()  # new game
+                self.started = True
+                self.white_time_left = self.initial_time_sec
+                self.black_time_left = self.initial_time_sec
+                self.last_update_ts = time.time()
+                self.turn_color = "white"
+                print(f"[ROOM] Board created for room {self.room_id}, game started")
+
+    def _update_clock(self):
+        """
+        Cập nhật clock dựa trên thời gian thực cho bên đang tới lượt.
+        Gọi mỗi lần trước khi xử lý nước đi mới.
+        """
+        if not self.started or self.board is None:
+            return
+
+        now = time.time()
+        dt = now - self.last_update_ts
+        self.last_update_ts = now
+
+        # turn_color dựa trên board.turn_white
+        self.turn_color = "white" if self.board.turn_white else "black"
+
+        if self.turn_color == "white":
+            self.white_time_left -= dt
+        else:
+            self.black_time_left -= dt
+
+        # clamp
+        if self.white_time_left < 0:
+            self.white_time_left = 0
+        if self.black_time_left < 0:
+            self.black_time_left = 0
+
+    def _check_flag(self) -> Optional[str]:
+        """
+        Kiểm tra hết giờ: trả về 'white_win', 'black_win' hoặc None.
+        """
+        if self.white_time_left <= 0 and self.black_time_left <= 0:
+            # hoà do cả 2 hết giờ, tuỳ bạn muốn xử lý
+            return "draw"
+        if self.white_time_left <= 0:
+            return "black_win"
+        if self.black_time_left <= 0:
+            return "white_win"
+        return None
+
+    def current_turn_color(self) -> str:
+        """
+        'white' nếu tới lượt trắng, 'black' nếu tới lượt đen.
+        """
+        # Nếu vì lý do gì đó board chưa tạo, default trắng
+        if self.board is None:
+            return "white"
+        return "white" if self.board.turn_white else "black"
+
+    def make_move(self, color: str, uci: str) -> dict:
+        """
+        Thực hiện nước đi nếu hợp lệ & đúng lượt.
+        Trả về dict state trả cho client.
+        Có thể raise ValueError nếu illegal move.
+        """
+        # nếu vì lý do gì đó chưa start -> chặn
+        if self.board is None or not self.started:
+            print(f"[DEBUG] make_move called but game not started: board={self.board}, started={self.started}")
+            raise ValueError("game_not_started")
+
+        # Cập nhật clock cho lượt hiện tại trước khi xử lý move
+        self._update_clock()
+
+        # Kiểm tra hết giờ trước khi cho đi
+        flag_result = self._check_flag()
+        if flag_result is not None:
+            # game đã hết giờ, không cho đi nữa
+            raise ValueError("time_over")
+
+        # Check đúng lượt
+        expected_color = self.current_turn_color()
+        if color != expected_color:
+            raise ValueError("not_your_turn")
+
+        legal_moves = generate_legal_moves(self.board)
+        if uci not in legal_moves:
+            raise ValueError("illegal_move")
+
+        # Apply move
+        self.board.apply_uci(uci)
+
+        # Sau khi đi xong, cập nhật lượt & check kết quả (chiếu hết, hoà...)
+        fen = self.board.export_fen()
+        result = get_game_result(self.board)
+
+        # Nếu game chưa kết thúc do nước cờ, vẫn cần check flag 1 lần nữa
+        if result == "ongoing":
+            flag_result = self._check_flag()
+            if flag_result is not None:
+                result = flag_result
+
+        state = {
+            "type": "state",
+            "room_id": self.room_id,
+            "fen": fen,
+            "turn": self.current_turn_color(),   # dựa trên board.turn_white
+            "result": result,
+            "last_move": uci,
+            "time_white": self.white_time_left,
+            "time_black": self.black_time_left,
+        }
+        return state
+
+
+# Global room registry
+rooms: Dict[str, GameRoom] = {}
+rooms_lock = threading.Lock()
+
+
+def create_room() -> GameRoom:
+    room_id = uuid.uuid4().hex[:8]  # short id
+    room = GameRoom(room_id)
+    with rooms_lock:
+        rooms[room_id] = room
+    print(f"[ROOM] Created room {room_id}")
+    return room
+
+
+def get_room(room_id: str) -> Optional[GameRoom]:
+    with rooms_lock:
+        return rooms.get(room_id)
+
+
+def delete_room_if_empty(room: GameRoom):
+    with rooms_lock:
+        if room.is_empty() and room.room_id in rooms:
+            print(f"[ROOM] Deleting empty room {room.room_id}")
+            del rooms[room.room_id]
+
+
+# ----- Networking helpers -----
+
+def send_json(conn: socket.socket, msg: dict):
+    try:
+        data = json.dumps(msg) + "\n"
+        conn.sendall(data.encode("utf-8"))
+    except OSError as e:
+        print(f"[WARN] send_json error: {e}")
+        pass
+
+
+# ----- Per-connection handler -----
+
+def handle_client(conn: socket.socket, addr):
+    print(f"[INFO] New connection from {addr}")
+    buffer = ""
+    current_room: Optional[GameRoom] = None
+    player_color: Optional[str] = None  # 'white' hoặc 'black'
+
+    try:
+        while True:
+            data = conn.recv(4096)
+            if not data:
+                print(f"[INFO] Connection closed by {addr}")
+                break
+
+            buffer += data.decode("utf-8")
+
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                line = line.strip()
+                if not line:
+                    continue
+
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    print(f"[WARN] Invalid JSON from {addr}: {line}")
+                    send_json(conn, {"type": "error", "message": "invalid_json"})
+                    continue
+
+                msg_type = msg.get("type")
+
+                if msg_type == "join":
+                    current_room, player_color = handle_join(conn, addr, msg)
+                elif msg_type == "move":
+                    if current_room is None or player_color is None:
+                        send_json(conn, {"type": "error", "message": "not_in_room"})
+                    else:
+                        handle_move(conn, addr, current_room, player_color, msg)
+                elif msg_type == "list_rooms":
+                    handle_list_rooms(conn)
+                else:
+                    send_json(conn, {"type": "error", "message": "unknown_message_type"})
+
+    except ConnectionResetError:
+        print(f"[INFO] Connection reset by {addr}")
+    finally:
+        # Cleanup if in room
+        if current_room is not None:
+            current_room.remove_conn(conn)
+            delete_room_if_empty(current_room)
+        conn.close()
+        print(f"[INFO] Connection handler for {addr} terminated")
+
+
+def handle_join(conn: socket.socket, addr, msg: dict) -> tuple[Optional[GameRoom], Optional[str]]:
+    game_id = msg.get("game_id")
+    if game_id in ("", None):
+        # create new room
+        room = create_room()
+    else:
+        room = get_room(str(game_id))
+        if room is None:
+            send_json(conn, {"type": "join_failed", "reason": "room_not_found"})
+            return None, None
+
+    color = room.add_player(conn)
+    if color is None:
+        send_json(conn, {"type": "join_failed", "reason": "room_full"})
+        return None, None
+
+    print(f"[ROOM] {addr} joined room {room.room_id} as {color}")
+    send_json(conn, {
+        "type": "joined",
+        "room_id": room.room_id,
+        "color": color,
+    })
+
+    # Nếu phòng đã đủ 2 người, khởi tạo game và gửi state ban đầu
+    if room.is_full():
+        print(f"[ROOM] Room {room.room_id} is full, starting game")
+        room.ensure_started()
+        if room.board is not None:
+            initial_state = {
+                "type": "state",
+                "room_id": room.room_id,
+                "fen": room.board.export_fen(),
+                "turn": room.current_turn_color(),
+                "result": get_game_result(room.board),
+                "last_move": None,
+                "time_white": room.white_time_left,
+                "time_black": room.black_time_left,
+            }
+        else:
+            initial_state = {
+                "type": "error",
+                "message": "failed_to_start_game",
+            }
+        print(f"[DEBUG] sending initial_state to both: {initial_state}")
+
+        notify_both(room, initial_state)
+
+    return room, color
+
+
+def handle_move(conn: socket.socket, addr, room: GameRoom, player_color: str, msg: dict):
+    """
+    Xử lý message move từ client:
+    msg: {"type": "move", "uci": "e2e4"}
+    """
+    uci = msg.get("uci")
+    if not isinstance(uci, str):
+        send_json(conn, {"type": "error", "message": "invalid_move_format"})
+        return
+    
+    # Bảo hiểm: đảm bảo game đã start
+    room.ensure_started()
+
+    try:
+        state = room.make_move(player_color, uci)
+    except ValueError as e:
+        reason = str(e)
+        print(f"[MOVE] Illegal/invalid move ffrom {addr} in room {room.room_id}: {reason}")
+        send_json(conn, {"type": "move_rejected", "reason": reason})
+        return
+
+    # Move hợp lệ, broadcast state mới cho cả 2
+    print(f"[MOVE] {addr} ({player_color}) played {uci} in room {room.room_id}")
+    notify_both(room, state)
+
+def handle_list_rooms(conn: socket.socket) -> None:
+    """
+    Gửi về danh sách các phòng hiện tại, với số người chơi trong phòng.
+    Không leak socket info, chỉ room_id + player_count + started.
+    """
+    room_list = []
+    with rooms_lock:
+        for room_id, room in rooms.items():
+            room_list.append(
+                {
+                    "room_id": room_id,
+                    "players": room.player_count(),
+                    "started": room.started,
+                }
+            )
+
+    send_json(conn, {"type": "rooms", "rooms": room_list})
+
+
+def notify_both(room: GameRoom, msg: dict):
+    with room.lock:
+        conns = [c for c in (room.white_conn, room.black_conn) if c is not None]
+    for c in conns:
+        send_json(c, msg)
+
+
+# ----- Server loop -----
+
+def start_server(host: str = HOST, port: int = PORT):
+    server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_sock.bind((host, port))
+    server_sock.listen()
+    print(f"[INFO] Server listening on {host}:{port}")
+
+    try:
+        while True:
+            conn, addr = server_sock.accept()
+            thread = threading.Thread(target=handle_client, args=(conn, addr), daemon=True)
+            thread.start()
+    except KeyboardInterrupt:
+        print("\n[INFO] Server shutting down...")
+    finally:
+        server_sock.close()
+
+
+if __name__ == "__main__":
+    start_server()
 
 

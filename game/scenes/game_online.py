@@ -406,12 +406,16 @@ class GameOnlineScene(SceneBase):
 
     def render(self, surface: pygame.Surface):
         surface.fill(COLOR_BG)
+
+        # GỌI Y HỆT LOCAL, CHỈ KHÁC LÀ capture_squares = []
         draw_board(
             surface,
-            self.selected_square,
-            self.highlight_squares,
-            self.last_move_squares,
+            self.selected_square,      # selected_square
+            self.highlight_squares,    # move_squares
+            [],                        # capture_squares (online chưa tách riêng, để trống)
+            self.last_move_squares,    # last_move_squares (đã set từ server)
         )
+
         draw_pieces(surface, self.board, self.font_piece)
 
         draw_hud(
@@ -437,6 +441,7 @@ class GameOnlineScene(SceneBase):
             self._render_game_over_overlay(surface)
         elif self.promotion_active:
             self._render_promotion_popup(surface)
+
 
     # ---------- Overlays ----------
 

@@ -33,32 +33,40 @@ class GameLocalScene(SceneBase):
         super().__init__(app)
         self.mode = mode
 
-        self.board = Board()  # trạng thái mới
+        # Trạng thái ván cờ
+        self.board = Board()
+
+        # Font
         self.font_piece = pygame.font.Font(None, int(40 * FONT_SCALE))
         self.font_hud = pygame.font.Font(None, int(32 * FONT_SCALE))
+        self.font_title_big = pygame.font.Font(None, int(72 * FONT_SCALE))
+        self.font_title_small = pygame.font.Font(None, int(40 * FONT_SCALE))
+        self.font_button = pygame.font.Font(None, int(36 * FONT_SCALE))
 
         # Lưu ô đang chọn (file, rank) hoặc None
         self.selected_square: Optional[Tuple[int, int]] = None
-        # List ô được highlight (nước đi hợp lệ từ selected)
+        # Ô đi được (không ăn quân)
         self.highlight_squares: List[Tuple[int, int]] = []
+        # Ô ăn quân
+        self.capture_squares: List[Tuple[int, int]] = []
         # 2 ô from/to của nước đi cuối
         self.last_move_squares: List[Tuple[int, int]] = []
 
-        # Đếm số nước đi (ply) – mỗi lần một bên đi 1 nước
+        # Đếm số nước đi (ply)
         self.ply_count: int = 0
 
-        # Đồng hồ cờ vua: mỗi bên có CHESS_TIME_LIMIT_SEC giây, đếm ngược
+        # Đồng hồ cờ vua (đếm ngược, mỗi bên CHESS_TIME_LIMIT_SEC giây)
         self.white_time_sec: float = float(CHESS_TIME_LIMIT_SEC)
         self.black_time_sec: float = float(CHESS_TIME_LIMIT_SEC)
 
-        # Lưu list nước hợp lệ (UCI)
+        # Danh sách nước hợp lệ hiện tại (UCI)
         self.legal_moves_uci: List[str] = generate_legal_moves(self.board)
 
         # Trạng thái game
-        self.game_over = False
+        self.game_over: bool = False
         self.game_result: str = "ongoing"  # 'white_win' | 'black_win' | 'draw' | 'ongoing'
-        self.game_over_reason: str = ""
-        self.status_text: str = ""
+        self.game_over_reason: str = ""    # "Checkmate" | "Stalemate" | "Time out" | ...
+        self.status_text: str = ""         # string hiển thị trên HUD
 
         # ====== PHONG CẤP ======
         self.promotion_active: bool = False
@@ -67,11 +75,10 @@ class GameLocalScene(SceneBase):
 
         # ====== GAME OVER OVERLAY ======
         self.game_over_buttons: List[Button] = []
-        self.font_title_big = pygame.font.Font(None, int(72 * FONT_SCALE))
-        self.font_title_small = pygame.font.Font(None, int(40 * FONT_SCALE))
-        self.font_button = pygame.font.Font(None, int(36 * FONT_SCALE))
 
-    # ---------- Helpers chung ----------
+    # ------------------------------------------------------------------
+    #  Helpers chung
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _uci_to_from_to(uci: str) -> Tuple[Tuple[int, int], Tuple[int, int]]:
@@ -98,11 +105,11 @@ class GameLocalScene(SceneBase):
 
     def _update_game_status(self):
         """
-        Cập nhật biến self.game_over, self.game_result, self.status_text,...
-        sau mỗi nước đi (theo luật cờ, KHÔNG tính hết giờ).
+        Cập nhật self.game_over, self.game_result, self.status_text
+        theo luật cờ (KHÔNG đụng tới case hết giờ).
         """
         if self.game_over:
-            # Nếu đã hết giờ rồi thì không override trạng thái nữa
+            # Nếu đã hết giờ / đã game over rồi thì không override nữa
             return
 
         status = get_game_result(self.board)
@@ -150,18 +157,25 @@ class GameLocalScene(SceneBase):
         try:
             self.board.apply_uci(uci)
         except ValueError:
+            # Không làm gì nếu move fail
             return False
 
         # Ghi lại nước đi cuối
         self.last_move_squares = [src, dst]
 
-        # Tăng số ply (mỗi lần có nước đi)
+        # Tăng ply
         self.ply_count += 1
 
-        # Cập nhật danh sách nước hợp lệ & status
+        # Làm mới danh sách nước hợp lệ
         self.legal_moves_uci = generate_legal_moves(self.board)
-        self._update_game_status()
 
+        # Clear selection / highlight
+        self.selected_square = None
+        self.highlight_squares = []
+        self.capture_squares = []
+
+        # Cập nhật trạng thái game theo luật
+        self._update_game_status()
         return True
 
     def _on_flag_timeout(self, white_flag: bool):
@@ -185,7 +199,9 @@ class GameLocalScene(SceneBase):
 
         self._create_game_over_buttons()
 
-    # ---------- PHONG CẤP: UI & logic ----------
+    # ------------------------------------------------------------------
+    #  PHONG CẤP
+    # ------------------------------------------------------------------
 
     def _start_promotion_choice(self, promotion_moves: List[str]):
         """
@@ -211,6 +227,7 @@ class GameLocalScene(SceneBase):
         for i, piece_code in enumerate(order):
             if piece_code not in self.promotion_choices:
                 continue
+
             rect = pygame.Rect(0, 0, btn_size, btn_size)
             rect.topleft = (start_x + i * (btn_size + gap), center_y)
 
@@ -242,11 +259,9 @@ class GameLocalScene(SceneBase):
         self.promotion_choices.clear()
         self.promotion_buttons.clear()
 
-        # Reset chọn ô
-        self.selected_square = None
-        self.highlight_squares = []
-
-    # ---------- GAME OVER OVERLAY ----------
+    # ------------------------------------------------------------------
+    #  GAME OVER OVERLAY
+    # ------------------------------------------------------------------
 
     def _create_game_over_buttons(self):
         """Tạo nút Play Again / Back to Menu khi game over."""
@@ -281,7 +296,9 @@ class GameLocalScene(SceneBase):
         from .menu_main import MainMenuScene
         self.app.change_scene(MainMenuScene)
 
-    # ---------- Event handling ----------
+    # ------------------------------------------------------------------
+    #  EVENT HANDLING
+    # ------------------------------------------------------------------
 
     def handle_events(self, events: List[pygame.event.Event]):
         # Ưu tiên: nếu đang chọn phong cấp
@@ -328,13 +345,16 @@ class GameLocalScene(SceneBase):
         if sq is None:
             self.selected_square = None
             self.highlight_squares = []
+            self.capture_squares = []
             return
 
         file, rank = sq
         piece_symbol = self.board.piece_symbol_at(file, rank)
 
+        # --------------------------------------------------------------
+        #  Chưa chọn quân -> chọn quân
+        # --------------------------------------------------------------
         if self.selected_square is None:
-            # Chưa chọn quân
             if not piece_symbol:
                 return
 
@@ -344,53 +364,71 @@ class GameLocalScene(SceneBase):
 
             self.selected_square = (file, rank)
             moves_from = self._legal_moves_from_square(file, rank)
-            dest_squares: List[Tuple[int, int]] = []
+
+            normal_squares: List[Tuple[int, int]] = []
+            capture_squares: List[Tuple[int, int]] = []
+
             for uci in moves_from:
                 _, (tf, tr) = self._uci_to_from_to(uci)
-                dest_squares.append((tf, tr))
-            self.highlight_squares = dest_squares
-        else:
-            # Đã chọn quân, giờ chọn đích
-            src_file, src_rank = self.selected_square
 
-            if (file, rank) == (src_file, src_rank):
-                self.selected_square = None
-                self.highlight_squares = []
-                return
+                # Ô đích hiện tại có quân đối phương? -> nước ăn
+                dest_piece = self.board.piece_symbol_at(tf, tr)
+                if dest_piece and (dest_piece.isupper() != self.board.turn_white):
+                    capture_squares.append((tf, tr))
+                else:
+                    normal_squares.append((tf, tr))
 
-            candidate_moves = self._legal_moves_from_square(src_file, src_rank)
+            self.highlight_squares = normal_squares
+            self.capture_squares = capture_squares
+            return
 
-            promotion_moves: List[str] = []
-            normal_move: Optional[str] = None
+        # --------------------------------------------------------------
+        #  Đã chọn quân -> chọn đích
+        # --------------------------------------------------------------
+        src_file, src_rank = self.selected_square
 
-            for uci in candidate_moves:
-                (_, _), (tf, tr) = self._uci_to_from_to(uci)
-                if tf == file and tr == rank:
-                    if len(uci) == 5:
-                        promotion_moves.append(uci)
-                    else:
-                        normal_move = uci
-
-            if promotion_moves:
-                # Bật UI chọn phong cấp
-                self._start_promotion_choice(promotion_moves)
-                return
-
-            if normal_move is None:
-                self.selected_square = None
-                self.highlight_squares = []
-                return
-
-            success = self._apply_move_and_update_state(normal_move)
-            if not success:
-                self.selected_square = None
-                self.highlight_squares = []
-                return
-
+        # Click lại đúng ô đang chọn -> bỏ chọn
+        if (file, rank) == (src_file, src_rank):
             self.selected_square = None
             self.highlight_squares = []
+            self.capture_squares = []
+            return
 
-    # ---------- Update & Render ----------
+        candidate_moves = self._legal_moves_from_square(src_file, src_rank)
+
+        promotion_moves: List[str] = []
+        normal_move: Optional[str] = None
+
+        for uci in candidate_moves:
+            (_, _), (tf, tr) = self._uci_to_from_to(uci)
+            if tf == file and tr == rank:
+                if len(uci) == 5:
+                    promotion_moves.append(uci)
+                else:
+                    normal_move = uci
+
+        # Nếu là ô phong cấp -> bật popup
+        if promotion_moves:
+            self._start_promotion_choice(promotion_moves)
+            return
+
+        if normal_move is None:
+            # Click vào chỗ không hợp lệ -> clear chọn
+            self.selected_square = None
+            self.highlight_squares = []
+            self.capture_squares = []
+            return
+
+        # Thực hiện nước đi thường
+        success = self._apply_move_and_update_state(normal_move)
+        if not success:
+            self.selected_square = None
+            self.highlight_squares = []
+            self.capture_squares = []
+
+    # ------------------------------------------------------------------
+    #  UPDATE & RENDER
+    # ------------------------------------------------------------------
 
     def update(self, dt: float):
         """
@@ -413,15 +451,20 @@ class GameLocalScene(SceneBase):
 
     def render(self, surface: pygame.Surface):
         surface.fill(COLOR_BG)
+
+        # Bàn cờ + hiệu ứng
         draw_board(
             surface,
             self.selected_square,
             self.highlight_squares,
+            self.capture_squares,
             self.last_move_squares,
         )
+
+        # Quân cờ
         draw_pieces(surface, self.board, self.font_piece)
 
-        # HUD trên cùng (hiện không vẽ gì, giữ để kiến trúc thống nhất)
+        # HUD trên cùng (turn + status)
         draw_hud(
             surface,
             self.board,
@@ -442,13 +485,15 @@ class GameLocalScene(SceneBase):
             self.status_text,
         )
 
+        # Overlay (game over / phong cấp)
         if self.game_over:
             self._render_game_over_overlay(surface)
         elif self.promotion_active:
-            # Nếu phong cấp đang mở thì ưu tiên vẽ popup này (game chưa over)
             self._render_promotion_popup(surface)
 
-    # ---------- Render overlay ----------
+    # ------------------------------------------------------------------
+    #  RENDER OVERLAY
+    # ------------------------------------------------------------------
 
     def _render_promotion_popup(self, surface: pygame.Surface):
         overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
