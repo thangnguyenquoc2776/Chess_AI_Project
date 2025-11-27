@@ -2,6 +2,3 @@ pygame
 python-chess
 torch
 joblib
-socket
-json
-threading
