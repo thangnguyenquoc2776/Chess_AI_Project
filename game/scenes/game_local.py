@@ -534,6 +534,7 @@ class GameLocalScene(SceneBase):
             self.ply_count,
             self.board.turn_white,
             self.status_text,
+            "",
         )
 
         # Overlay ưu tiên nằm trên cùng
