@@ -61,7 +61,12 @@ class GameOnlineScene(SceneBase):
         self._server_black_time: float = 0.0
         self._last_clock_sync: float = 0.0  # giây, pygame.time.get_ticks()/1000.0
 
-        # Legal moves client-side (chỉ để highlight UX)
+         # Chưa nhận state nào từ server
+        self._has_initial_state: bool = False
+
+
+        self.legal_moves_uci: List[str] = []  # chỉ dùng để highlight / client-side UX
+
         self.legal_moves_uci: List[str] = generate_legal_moves(self.board)
 
         # Trạng thái game
@@ -296,11 +301,13 @@ class GameOnlineScene(SceneBase):
     def _handle_server_message(self, msg: Dict[str, Any]) -> None:
         mtype = msg.get("type")
         if mtype == "state":
+            print("Received state from server")
             fen = msg.get("fen")
             if isinstance(fen, str):
                 self.board.import_fen(fen)
+                
+            self._has_initial_state = True
 
-            # Nước đi cuối
             self.last_move_squares = []
             last_uci = msg.get("last_move")
             if isinstance(last_uci, str):
@@ -346,6 +353,8 @@ class GameOnlineScene(SceneBase):
 
     def _is_player_turn(self) -> bool:
         # Dựa trên state board: turn_white
+        if not self._has_initial_state:
+            return False
         if self.game_result != "ongoing":
             return False
         board_turn = "white" if self.board.turn_white else "black"

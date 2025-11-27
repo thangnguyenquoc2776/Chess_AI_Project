@@ -110,7 +110,8 @@ class OnlineMenuScene(SceneBase):
 
         deadline = time.time() + timeout
         while time.time() < deadline:
-            msgs = client.poll_messages()
+            # msgs = client.poll_messages()
+            msgs = client.peek_messages()
             for m in msgs:
                 if m.get("type") in target_types:
                     return m

@@ -83,22 +83,26 @@ class NetworkClient:
             while self.connected:
                 data = s.recv(4096)
                 if not data:
-                    # server đóng kết nối
+                    print("[NET] socket closed by server")
                     break
 
-                self._recv_buffer += data.decode("utf-8")
+                chunk = data.decode("utf-8")
+                # print("[NET] raw recv:", repr(chunk))      # DEBUG
+                self._recv_buffer += chunk
 
                 while "\n" in self._recv_buffer:
                     line, self._recv_buffer = self._recv_buffer.split("\n", 1)
                     line = line.strip()
                     if not line:
                         continue
+                    print("[NET] line:", repr(line))       # DEBUG
                     try:
                         msg = json.loads(line)
-                    except json.JSONDecodeError:
-                        # bỏ qua json lỗi
+                    except json.JSONDecodeError as e:
+                        print("[NET] json error:", e, "line=", repr(line))
                         continue
 
+                    # print("[NET] msg:", msg)              # DEBUG
                     with self._incoming_lock:
                         self._incoming.append(msg)
 
@@ -111,3 +115,11 @@ class NetworkClient:
             except OSError:
                 pass
             self._sock = None
+
+    def peek_messages(self) -> List[Dict[str, Any]]:
+        """
+        Xem các message đã nhận được nhưng KHÔNG xoá khỏi hàng đợi.
+        Dùng trong menu (chờ 'joined') để không làm mất 'state'.
+        """
+        with self._incoming_lock:
+            return list(self._incoming)
