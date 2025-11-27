@@ -29,12 +29,17 @@ class GameRoom:
         self.board: Optional[Board] = None
         self.started: bool = False
 
+        # Kết quả ván đấu do server quản lý:
+        # "ongoing" | "white_win" | "black_win" | "draw"
+        self.result: str = "ongoing"
+
         # Clock (seconds)
         self.initial_time_sec: float = 300.0  # 5 phút, tuỳ bạn chỉnh
         self.white_time_left: float = self.initial_time_sec
         self.black_time_left: float = self.initial_time_sec
         self.last_update_ts: float = time.time()
-        
+        self.turn_color: str = "white"
+
     def add_player(self, conn: socket.socket) -> Optional[str]:
         """
         Thêm player vào phòng.
@@ -72,7 +77,7 @@ class GameRoom:
     def is_full(self) -> bool:
         with self.lock:
             return self.white_conn is not None and self.black_conn is not None
-        
+
     def player_count(self) -> int:
         with self.lock:
             c = 0
@@ -92,6 +97,7 @@ class GameRoom:
             if not self.started:
                 self.board = Board()  # new game
                 self.started = True
+                self.result = "ongoing"
                 self.white_time_left = self.initial_time_sec
                 self.black_time_left = self.initial_time_sec
                 self.last_update_ts = time.time()
@@ -126,7 +132,8 @@ class GameRoom:
 
     def _check_flag(self) -> Optional[str]:
         """
-        Kiểm tra hết giờ: trả về 'white_win', 'black_win' hoặc None.
+        Kiểm tra hết giờ: trả về 'white_win', 'black_win' hoặc None
+        (có thể trả 'draw' nếu cả 2 hết giờ).
         """
         if self.white_time_left <= 0 and self.black_time_left <= 0:
             # hoà do cả 2 hết giờ, tuỳ bạn muốn xử lý
@@ -150,8 +157,12 @@ class GameRoom:
         """
         Thực hiện nước đi nếu hợp lệ & đúng lượt.
         Trả về dict state trả cho client.
-        Có thể raise ValueError nếu illegal move.
+        Có thể raise ValueError nếu illegal move hoặc game đã kết thúc.
         """
+        # Nếu game đã kết thúc rồi thì không cho đi nữa
+        if self.result != "ongoing":
+            raise ValueError("game_already_over")
+
         # nếu vì lý do gì đó chưa start -> chặn
         if self.board is None or not self.started:
             print(f"[DEBUG] make_move called but game not started: board={self.board}, started={self.started}")
@@ -164,6 +175,7 @@ class GameRoom:
         flag_result = self._check_flag()
         if flag_result is not None:
             # game đã hết giờ, không cho đi nữa
+            self.result = flag_result
             raise ValueError("time_over")
 
         # Check đúng lượt
@@ -188,12 +200,14 @@ class GameRoom:
             if flag_result is not None:
                 result = flag_result
 
+        self.result = result
+
         state = {
             "type": "state",
             "room_id": self.room_id,
             "fen": fen,
             "turn": self.current_turn_color(),   # dựa trên board.turn_white
-            "result": result,
+            "result": self.result,
             "last_move": uci,
             "time_white": self.white_time_left,
             "time_black": self.black_time_left,
@@ -279,6 +293,16 @@ def handle_client(conn: socket.socket, addr):
                         handle_move(conn, addr, current_room, player_color, msg)
                 elif msg_type == "list_rooms":
                     handle_list_rooms(conn)
+                elif msg_type == "resign":
+                    if current_room is None or player_color is None:
+                        send_json(conn, {"type": "error", "message": "not_in_room"})
+                    else:
+                        handle_resign(conn, addr, current_room, player_color)
+                elif msg_type == "offer_draw":
+                    if current_room is None or player_color is None:
+                        send_json(conn, {"type": "error", "message": "not_in_room"})
+                    else:
+                        handle_offer_draw(conn, addr, current_room, player_color)
                 else:
                     send_json(conn, {"type": "error", "message": "unknown_message_type"})
 
@@ -352,7 +376,7 @@ def handle_move(conn: socket.socket, addr, room: GameRoom, player_color: str, ms
     if not isinstance(uci, str):
         send_json(conn, {"type": "error", "message": "invalid_move_format"})
         return
-    
+
     # Bảo hiểm: đảm bảo game đã start
     room.ensure_started()
 
@@ -367,6 +391,99 @@ def handle_move(conn: socket.socket, addr, room: GameRoom, player_color: str, ms
     # Move hợp lệ, broadcast state mới cho cả 2
     print(f"[MOVE] {addr} ({player_color}) played {uci} in room {room.room_id}")
     notify_both(room, state)
+
+
+def handle_resign(conn: socket.socket, addr, room: GameRoom, player_color: str) -> None:
+    """
+    Người chơi đầu hàng:
+    - Nếu white resign -> black_win
+    - Nếu black resign -> white_win
+    Broadcast luôn state mới cho cả 2.
+    """
+    # Nếu game chưa start (chưa đủ 2 người) thì báo lỗi nhẹ
+    if not room.started or room.board is None:
+        send_json(conn, {"type": "error", "message": "game_not_started"})
+        return
+
+    # Nếu game đã kết thúc rồi, chỉ gửi lại state hiện tại
+    if room.result != "ongoing":
+        fen = room.board.export_fen()
+        state = {
+            "type": "state",
+            "room_id": room.room_id,
+            "fen": fen,
+            "turn": room.current_turn_color(),
+            "result": room.result,
+            "last_move": None,
+            "time_white": room.white_time_left,
+            "time_black": room.black_time_left,
+        }
+        notify_both(room, state)
+        return
+
+    # Đặt kết quả dựa trên người đầu hàng
+    if player_color == "white":
+        room.result = "black_win"
+    else:
+        room.result = "white_win"
+
+    fen = room.board.export_fen()
+    state = {
+        "type": "state",
+        "room_id": room.room_id,
+        "fen": fen,
+        "turn": room.current_turn_color(),
+        "result": room.result,
+        "last_move": None,
+        "time_white": room.white_time_left,
+        "time_black": room.black_time_left,
+    }
+    print(f"[GAME] Player {player_color} resigned in room {room.room_id}, result={room.result}")
+    notify_both(room, state)
+
+
+def handle_offer_draw(conn: socket.socket, addr, room: GameRoom, player_color: str) -> None:
+    """
+    Xử lý đề nghị hoà.
+    Đơn giản hoá: cứ ai bấm Offer Draw là hai bên hoà luôn (result='draw').
+    Nếu muốn phức tạp hơn (bên kia phải accept) thì cần thêm message 'draw_offer'/'draw_response'.
+    """
+    # Nếu game chưa start (chưa đủ 2 người) thì báo lỗi
+    if not room.started or room.board is None:
+        send_json(conn, {"type": "error", "message": "game_not_started"})
+        return
+
+    if room.result != "ongoing":
+        # Game đã kết thúc rồi, gửi lại state hiện tại
+        fen = room.board.export_fen()
+        state = {
+            "type": "state",
+            "room_id": room.room_id,
+            "fen": fen,
+            "turn": room.current_turn_color(),
+            "result": room.result,
+            "last_move": None,
+            "time_white": room.white_time_left,
+            "time_black": room.black_time_left,
+        }
+        notify_both(room, state)
+        return
+
+    room.result = "draw"
+    fen = room.board.export_fen()
+    state = {
+        "type": "state",
+        "room_id": room.room_id,
+        "fen": fen,
+        "turn": room.current_turn_color(),
+        "result": room.result,
+        "last_move": None,
+        "time_white": room.white_time_left,
+        "time_black": room.black_time_left,
+    }
+    print(f"[GAME] Draw agreed (auto) in room {room.room_id}")
+    notify_both(room, state)
+
 
 def handle_list_rooms(conn: socket.socket) -> None:
     """
